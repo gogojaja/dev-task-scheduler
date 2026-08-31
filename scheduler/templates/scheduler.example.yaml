@@ -1,0 +1,40 @@
+# 定时任务系统配置示例
+# 复制此文件为 scheduler.yaml 并根据需要修改
+
+scheduler:
+  timezone: Asia/Shanghai
+  jobstore:
+    type: sqlite
+    path: .secrets/scheduler.db
+  executor:
+    type: threadpool
+    max_workers: 10
+  misfire_grace_time: 3600  # 错过触发宽限时间（秒）
+  coalesce: true  # 多次 misfire 是否合并执行
+
+execution:
+  default_max_retries: 3
+  default_timeout: 300
+  retry_base_delay: 60        # 初始重试延迟（秒）
+  retry_max_delay: 3600       # 最大重试延迟（秒）
+  retry_jitter: 30            # 重试抖动范围（秒）
+  retry_backoff_factor: 2.0   # 指数退避因子
+
+recording:
+  enabled: true
+  csv_path: 台账/31_定时任务执行记录.csv
+  archive_days: 90  # SQLite 执行记录保留天数
+
+alerting:
+  enabled: true
+  system_notification: true
+  failed_alert_threshold: 1    # 失败几次后告警
+  queue_alert_threshold: 50    # 队列堆积阈值
+  heartbeat_timeout: 300       # 心跳超时（秒）
+  webhook_url: ""              # 可选：webhook 告警地址
+
+tasks:
+  include_paths:
+    - tools/scheduler/tasks/
+  config_files:
+    - config/tasks.yaml

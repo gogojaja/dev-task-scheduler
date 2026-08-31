@@ -1,0 +1,42 @@
+# 任务配置示例
+# 在此文件中定义定时任务，也可以用代码装饰器方式注册
+
+tasks:
+  # 示例 1：cron 触发器
+  - name: daily_backup
+    description: 每日台账备份
+    trigger:
+      type: cron
+      cron: "0 2 * * *"  # 每天凌晨 2 点
+    module: tasks.backup
+    function: daily_backup
+    idempotency_key: "{date}"
+    max_retries: 3
+    timeout: 600
+
+  # 示例 2：interval 触发器
+  - name: health_check
+    description: 健康检查
+    trigger:
+      type: interval
+      minutes: 5
+    module: tasks.health
+    function: check_health
+    idempotency_key: "{datetime}"
+    max_retries: 2
+    timeout: 30
+
+  # 示例 3：带参数的任务
+  - name: weekly_report
+    description: 每周报告
+    trigger:
+      type: cron
+      cron: "0 9 * * 1"  # 每周一早上 9 点
+    module: tasks.report
+    function: generate_weekly_report
+    idempotency_key: "{date}"
+    max_retries: 1
+    timeout: 300
+    params:
+      format: pdf
+      include_charts: true
