@@ -1,0 +1,6 @@
+章节,附录编号,附录标题,内容描述,版本,日期
+9-附录,APP-001,术语表,"幂等键(Idempotency Key): 重复执行唯一标识；死信队列(Dead Letter Queue): 重试耗尽后的任务队列；APScheduler: 第三方调度内核；PROJECT_ROOT: 跨项目环境变量；EARS: 需求行为化描述格式；MoSCoW: 优先级分级法(Must/Should/Could/Won't)；WAL: SQLite 预写日志模式；SIGTERM: Unix 终止信号；TerminateProcess: Windows 终止进程 API",v1.0,2026-09-01
+9-附录,APP-002,错误码清单,"SCH-00-000 成功/SCH-01-001~003 配置错误/SCH-02-001~003 注册错误/SCH-03-001~003 调度错误/SCH-04-001~003 执行错误/SCH-05-001~002 幂等错误/SCH-06-001~002 存储错误/SCH-07-001 超时错误/SCH-08-001 告警错误/SCH-09-001 权限错误",v1.0,2026-09-01
+9-附录,APP-003,CLI 命令参考,"start: 前台启动调度器(--tasks-dir/--config)；status: 查看状态；list: 列出任务；run: 手动执行(task_name)；history: 查看历史(--task-name)；stats: 查看统计；dlq: 查看死信队列",v1.0,2026-09-01
+9-附录,APP-004,幂等键变量替换表,"{date}: 日期；{datetime}: 按小时的日期时间；{task_name}: 任务名称；{run_id}: 运行 ID；{weekday}: 星期几(0=周一)；{month}: 月份；{year}: 年份；{param:xxx}: 任务参数",v1.0,2026-09-01
+9-附录,APP-005,配置文件模板,"scheduler 配置: timezone/jobstore.path/executor.max_workers/misfire_grace_time/coalesce；execution 配置: default_max_retries/default_timeout/retry_base_delay/retry_max_delay/retry_jitter；recording 配置: enabled/csv_path/archive_days；alerting 配置: enabled/system_notification/failed_alert_threshold/queue_alert_threshold/heartbeat_timeout/webhook_url",v1.0,2026-09-01

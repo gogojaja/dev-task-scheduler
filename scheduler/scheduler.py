@@ -95,6 +95,14 @@ class SchedulerManager:
                 # 从注册表加载所有活跃任务
                 self._load_registered_tasks()
 
+                # 崩溃恢复：清理上次异常退出的残留状态
+                recovery_summary = self.store.recover_from_crash()
+                if recovery_summary["recovered_executions"] > 0:
+                    logger.warning(
+                        f"Crash recovery: {recovery_summary['recovered_executions']} executions, "
+                        f"{len(recovery_summary['recovered_jobs'])} jobs recovered"
+                    )
+
                 # 启动调度器
                 self._scheduler.start()
                 self._running = True
@@ -444,7 +452,7 @@ class SchedulerManager:
             try:
                 task_def = TaskDefinition(
                     name=task_data["name"],
-                    func_ref=task_data.get("func_ref", "tools.scheduler.tasks:placeholder"),
+                    func_ref=task_data.get("func_ref", "scheduler.tasks:placeholder"),
                     trigger_type=TriggerType.CRON,
                     trigger_config={"cron": task_data.get("cron", "0 0 * * *")},
                     description=task_data.get("description", ""),

@@ -135,7 +135,7 @@ class TaskRegistry:
         导入时会自动注册。
 
         Args:
-            module_path: 模块路径（如 "tools.scheduler.tasks.example"）
+            module_path: 模块路径（如 "scheduler.tasks.example"）
 
         Returns:
             加载的任务数

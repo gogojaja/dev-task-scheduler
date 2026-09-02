@@ -1,0 +1,59 @@
+# 外部项目调度器配置示例
+scheduler:
+  max_concurrent: 5
+  default_timeout: 300
+  misfire_grace_time: 60
+
+execution:
+  max_retries: 3
+  retry_base_delay: 1.0
+  retry_backoff_factor: 2.0
+  retry_max_jitter: 30
+
+idempotency:
+  enabled: true
+  key_ttl: 3600
+
+recording:
+  enabled: true
+  csv_path: "logs/executions.csv"
+
+alerting:
+  enabled: true
+  system_notification: false
+  webhook_url: ""
+  min_alert_interval: 300
+
+tasks:
+  - name: daily_backup
+    func_ref: "examples.external_project.tasks:daily_backup"
+    trigger_type: cron
+    trigger_args:
+      hour: 2
+      minute: 0
+    timeout: 600
+    retry_max: 3
+
+  - name: hourly_health_check
+    func_ref: "examples.external_project.tasks:hourly_health_check"
+    trigger_type: interval
+    trigger_args:
+      hours: 1
+    timeout: 30
+
+  - name: weekly_report
+    func_ref: "examples.external_project.tasks:weekly_report"
+    trigger_type: cron
+    trigger_args:
+      day_of_week: "mon"
+      hour: 8
+      minute: 0
+    timeout: 300
+
+  - name: sync_user_data
+    func_ref: "examples.external_project.tasks:sync_user_data"
+    trigger_type: interval
+    trigger_args:
+      minutes: 30
+    timeout: 120
+    retry_max: 2

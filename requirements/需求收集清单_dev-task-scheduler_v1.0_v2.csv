@@ -1,0 +1,27 @@
+需求编号,来源载体,原子行为描述,MoSCoW,分类,验收标准,约束依据,状态
+REQ-PRJ-001,PRJ,系统应支持用户通过装饰器方式注册定时任务，任务名称唯一标识任务，触发器类型可选 cron/interval/date,Must,功能,"1.装饰器参数包含 name/trigger/description/idempotency_key/max_retries/timeout；2.同一任务名重复注册抛出 TASK_DUPLICATE 错误(SCH-02-001)；3.注册后可通过 get_scheduler().add_task(task_def) 动态添加",—,待评审
+REQ-PRJ-002,PRJ,系统应支持用户通过 YAML 配置文件批量注册定时任务，配置路径通过 CLI --config 参数指定,Should,功能,"1.YAML 文件包含 tasks 数组；2.每项包含 name/trigger/module/function/description/idempotency_key/max_retries/timeout 字段；3.加载失败抛出 CONFIG_NOT_FOUND(SCH-01-001) 或 CONFIG_PARSE_ERROR(SCH-01-002)",—,待评审
+REQ-PRJ-003,PRJ,系统应支持用户通过编程式 API 注册定时任务，使用 TaskDefinition 对象提交给 get_scheduler(),Should,功能,"1.TaskDefinition 包含 name/func_ref/trigger_type/trigger_config/description/max_retries/timeout/idempotency_key_expr 字段；2.func_ref 格式 module:function；3.注册后任务立即可用",—,待评审
+REQ-PRJ-004,PRJ,系统应基于 APScheduler 3.11.3 实现可靠调度，支持 cron/interval/date 三种触发器,Must,功能,"1.cron 触发器支持 year/month/day/week/day_of_week/hour/minute/second 参数；2.interval 触发器支持 weeks/days/hours/minutes/seconds 参数；3.date 触发器支持 run_date 参数；4.misfire_grace_time 默认 3600 秒；5.coalesce 默认合并执行",—,待评审
+REQ-PRJ-005,PRJ,系统应在框架层强制幂等校验，重复执行零副作用，幂等键支持变量替换,Must,功能,"1.幂等键格式 task_name:{表达式结果}；2.支持变量 {date}/{datetime}/{task_name}/{run_id}/{weekday}/{month}/{year}/{param:xxx}；3.同一幂等键重复执行返回 SKIPPED 状态(SCH-05-001)；4.幂等键冲突时不进入重试队列",—,待评审
+REQ-PRJ-006,PRJ,系统应提供指数退避 + 抖动的重试策略，失败任务进入死信队列避免重试风暴,Must,功能,"1.默认最大重试 3 次；2.初始重试延迟 60 秒；3.最大重试延迟 3600 秒；4.抖动范围 30 秒；5.重试耗尽后自动进入 DLQ 状态(SCH-04-001)；6.TaskResult.skip_retry=True 时不重试直接进 DLQ",—,待评审
+REQ-PRJ-007,PRJ,系统应使用 SQLite 存储任务状态和调度元数据，进程崩溃可恢复,Must,功能,"1.数据库路径默认 .secrets/scheduler.db；2.支持 WAL 模式并发；3.进程重启后任务自动恢复调度；4.数据库连接失败抛出 STORAGE_CONNECTION_FAILED(SCH-06-001)",—,待评审
+REQ-PRJ-008,PRJ,系统应以 CSV 台账格式记录每次任务执行记录，审计可追溯,Must,功能,"1.CSV 路径默认 台账/31_定时任务执行记录.csv；2.字段包含 run_id/task_name/trigger_type/scheduled_time/start_time/end_time/duration/status/retry_count/idempotency_key/error_code/error_message/result_data；3.UTF-8 with BOM 编码；4.追加写入不覆盖历史",—,待评审
+REQ-PRJ-009,PRJ,系统应提供系统通知 + Webhook 告警能力，支持失败/堆积/心跳异常告警,Should,功能,"1.失败告警阈值可配置(默认 1 次)；2.队列堆积阈值可配置(默认 50)；3.心跳超时可配置(默认 300 秒)；4.Webhook URL 可选；5.告警失败不阻塞主流程(SCH-08-001)",—,待评审
+REQ-PRJ-010,PRJ,系统应支持任务超时强制终止，防止单个任务阻塞调度器,Must,功能,"1.默认超时 300 秒；2.超时后发送 SIGTERM(Unix)/TerminateProcess(Windows)；3.超时记录 TASK_TIMEOUT(SCH-04-002)；4.超时后任务状态为 FAILED",—,待评审
+REQ-PRJ-011,PRJ,系统应支持 macOS/Linux/Windows 三平台运行，脚本和配置无平台专属依赖,Must,非功能,"1.路径使用 pathlib/os.path 统一处理；2.行尾统一 LF；3.禁 Windows 专属命令；4.CI 矩阵测试三平台；5.信号/进程级超时在 Windows 下使用 TerminateProcess",—,待评审
+REQ-PRJ-012,PRJ,系统应支持跨项目复用，经 PROJECT_ROOT 环境变量注入可调度其他项目的任务,Should,功能,"1.读取 PROJECT_ROOT 环境变量确定目标项目；2.任务目录可指定 --tasks-dir 参数；3.至少 1 个外部项目成功接入并运行",—,待评审
+REQ-PRJ-013,PRJ,系统应提供完整的 CLI 管理界面，支持 start/status/list/run/history/stats/dlq 命令,Should,功能,"1.start 命令支持前台运行+配置文件启动；2.status 查看调度器状态；3.list 列出已注册任务；4.run 手动执行指定任务；5.history 查看执行历史；6.stats 查看统计；7.dlq 查看死信队列",—,待评审
+REQ-PRJ-014,PRJ,系统应支持 TaskResult 多返回值规范，可控制 skip_retry 跳过重试行为,Should,功能,"1.None/True/str/dict 返回均视为成功；2.TaskResult.ok() 创建成功结果；3.TaskResult.fail(skip_retry=True) 业务错误不重试直接进 DLQ；4.TaskResult.fail(skip_retry=False) 可重试(默认)",—,待评审
+REQ-PRJ-015,PRJ,系统应提供 YAML 配置管理，支持调度器/执行/记录/告警四大配置域,Should,功能,"1.调度器配置：timezone/jobstore.path/executor.max_workers/misfire_grace_time/coalesce；2.执行配置：default_max_retries/default_timeout/retry_base_delay/retry_max_delay/retry_jitter；3.记录配置：enabled/csv_path/archive_days；4.告警配置：enabled/system_notification/failed_alert_threshold/queue_alert_threshold/heartbeat_timeout/webhook_url",—,待评审
+REQ-PRJ-016,PRJ,系统应提供内置示例任务 example_tasks.py 演示核心特性用法,Could,功能,"1.至少 3 个示例任务覆盖 cron/interval/date 三种触发器；2.演示幂等键用法；3.演示 TaskResult.skip_retry 用法；4.可通过 CLI run 命令手动执行验证",—,待评审
+REQ-PRJ-017,PRJ,系统应提供完整的文档体系，包含 README/API/架构/错误码手册/PyPI 发布页,Should,非功能,"1.README 覆盖特性/快速开始/跨项目/API/幂等键/触发器/返回值/目录/存储/配置/错误码/许可证/版本；2.错误码格式 SCH-XX-YYY，覆盖 10 类错误；3.PyPI 长描述与分类器完整",—,待评审
+REQ-PRJ-018,PRJ,系统应具备完整的测试体系，单测覆盖率 ≥80%，CI/CD 自动化,Should,非功能,"1.单元测试覆盖 models/registry/executor/idempotency/retry/state_store/record_writer/notifier/config；2.集成测试覆盖 CLI start/run/history/stats；3.GitHub Actions CI 矩阵三平台测试；4.覆盖率门禁 ≥80%",—,待评审
+REQ-PRJ-019,PRJ,系统应建立完整的企业级治理体系，按 DevProjectTeamSkill 全生命周期台账/评审/基线/交接,Should,非功能,"1.20+ 个 CSV 台账；2.阶段评审门禁生效；3.基线固化机制运行；4.交接文档标准化(L1/L2/L3)；5.铁律卡全程生效",—,待评审
+REQ-RB-001,RB,系统应遵守项目铁律：全程中文交流（对话/文档/台账/报告/注释说明一律中文，代码标识符可保留英文）,Must,合规,"1.所有非代码输出文件为中文；2.代码注释/文档为中文；3.违反即阻断修正",项目铁律 §8,待评审
+REQ-RB-002,RB,系统应遵守项目铁律：所有生成产物必须落在本项目目录内，禁止写入系统盘等非项目路径,Must,合规,"1.所有 CSV/日志/数据库/快照等产物在项目目录内；2.临时目录仅读；3.违反即回收留痕",项目铁律 §9,待评审
+REQ-RB-003,RB,系统应遵守项目铁律：敏感信息 A 级禁止入库，B 级脱敏入库（IP/主机名/用户名/路径）,Must,合规,"1.密钥/Token/凭据不入库；2.IP 完全脱敏；3.主机名/用户名/路径脱敏后入库；4.铁律 §3 A/B/C 级",iron_rules §3,待评审
+REQ-RB-004,RB,系统应遵守全局铁律：每次原子修改任务完成后必须执行 solidify 固化+git commit,Should,合规,"1.solidify 执行快照→刷新交接断点→打包→部署；2.禁止未固化成果跨模型传递；3.固化后 git commit",iron_rules §0,待评审
+REQ-ORG-001,ORG,系统应支持 PROJECT_ROOT 环境变量注入实现跨项目调度，经外部项目接入验证,Should,功能,"1.读取 PROJECT_ROOT 环境变量；2.外部项目可指定 tasks 目录；3.外部项目任务可正常注册并调度运行；4.至少 1 个外部项目验证通过",项目章程 §2 目标 3,待评审
+REQ-ORG-002,ORG,系统应按 IEEE 830 标准输出 SRS 软件需求规格说明书，覆盖七维度分析,Should,功能,"1.SRS 文档结构符合 IEEE 830；2.覆盖功能/性能/安全/可用性/可维护性/合规/接口七维度；3.每条需求可独立验收",IEEE 830,待评审
+REQ-ORG-003,ORG,系统应建立需求-架构-代码追溯矩阵，需求/架构/代码任一变更须同步更新,Should,功能,"1.统一标识符 REQ-/ADR-/AE-/MOD-/TC-；2.单一事实来源《需求-架构-代码追溯矩阵.csv》；3.断链超容忍度(默认 0)不得流转",iron_rules §6,待评审

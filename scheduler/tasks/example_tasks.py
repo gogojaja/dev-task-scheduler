@@ -111,3 +111,59 @@ def daily_report_task():
         message="Daily report generated successfully",
         data=stats,
     )
+
+
+# ─── 示例 6：超时任务（演示超时控制） ──────────────────────
+
+@register_task(
+    name="example_timeout",
+    trigger="cron",
+    minute="*/30",
+    description="示例：模拟超时的任务",
+    idempotency_key="{datetime}",
+    timeout=5,
+)
+def timeout_task():
+    """模拟耗时超过超时阈值的任务"""
+    import time
+    time.sleep(10)  # 超过 timeout=5
+    return "This should not be reached"
+
+
+# ─── 示例 7：幂等去重任务 ──────────────────────────────────
+
+@register_task(
+    name="example_idempotent",
+    trigger="cron",
+    hour=2,
+    minute=0,
+    description="示例：幂等去重任务（每天只执行一次）",
+    idempotency_key="{task_name}:{date}",
+)
+def idempotent_task():
+    """使用 date 级幂等键，确保每天只执行一次"""
+    return TaskResult.ok(
+        message="Daily sync completed",
+        data={"date": datetime.now().strftime("%Y-%m-%d")},
+    )
+
+
+# ─── 示例 8：带参数的任务 ──────────────────────────────────
+
+@register_task(
+    name="example_with_params",
+    trigger="interval",
+    hours=1,
+    description="示例：可配置参数的任务",
+    idempotency_key="{task_name}:{date}",
+    params={"threshold": 80, "notify": True},
+)
+def params_task(context: TaskContext):
+    """任务可以通过 context.params 获取运行参数"""
+    threshold = context.params.get("threshold", 50)
+    notify = context.params.get("notify", False)
+
+    return TaskResult.ok(
+        message=f"Check completed (threshold={threshold}, notify={notify})",
+        data={"checked_at": datetime.now().isoformat()},
+    )

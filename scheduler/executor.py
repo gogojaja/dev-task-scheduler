@@ -27,6 +27,7 @@ from .record_writer import get_record_writer, RecordWriter
 from .idempotency import get_idempotency_manager, IdempotencyManager
 from .retry import get_retry_policy, RetryPolicy
 from .utils import get_logger, load_function, now, get_node_id, gen_uuid
+from .timeout import run_with_thread_timeout, TimeoutError as TaskTimeoutError
 
 logger = get_logger("scheduler.executor")
 
@@ -161,59 +162,108 @@ class TaskExecutor:
 
         return result
 
+    def execute_with_retry(
+        self,
+        task_def: TaskDefinition,
+        trigger_type: str = "manual",
+        scheduled_time: datetime = None,
+        params: dict = None,
+    ) -> TaskResult:
+        """带重试的执行任务
+
+        在当前线程内执行重试循环，每次重试之间等待退避延迟。
+
+        Args:
+            task_def: 任务定义
+            trigger_type: 触发方式
+            scheduled_time: 计划执行时间
+            params: 任务参数
+
+        Returns:
+            最终执行结果
+        """
+        max_retries = task_def.max_retries
+        context = TaskContext.create(
+            task_name=task_def.name,
+            scheduled_time=scheduled_time or now(),
+            params={**task_def.params, **(params or {})},
+        )
+
+        for attempt in range(max_retries + 1):
+            context.retry_count = attempt
+
+            result = self.execute_task(
+                task_def=task_def,
+                trigger_type="retry" if attempt > 0 else trigger_type,
+                scheduled_time=scheduled_time,
+                params=params,
+            )
+
+            if result.success:
+                return result
+
+            # 判断是否应该继续重试
+            if self.retry_policy.is_dead_letter(attempt, skip_retry=result.skip_retry):
+                logger.critical(
+                    f"Task entered DLQ after {attempt} retries: {task_def.name}"
+                )
+                return result
+
+            # 计算重试延迟
+            delay = self.retry_policy.calculate_delay(attempt)
+            logger.info(
+                f"Task retry {attempt + 1}/{max_retries} in {delay:.1f}s: {task_def.name}"
+            )
+
+            # 等待重试（线程休眠）
+            import time
+            time.sleep(delay)
+
+        return result
+
     def _run_with_timeout(self, task_def: TaskDefinition,
                           context: TaskContext, timeout: int) -> TaskResult:
         """带超时控制地执行任务
 
-        使用线程实现超时控制（跨平台兼容）。
+        使用线程超时实现（跨平台兼容）。
+        可通过 timeout.py 选择信号/进程级超时。
         """
-        result_container: dict = {}
+        func = load_function(task_def.func_ref)
+
+        # 确定函数签名
+        import inspect
+        sig = inspect.signature(func)
+        use_context = len(sig.parameters) > 0
 
         def target():
-            try:
-                func = load_function(task_def.func_ref)
-                # 支持两种签名：带 context 和不带 context
-                import inspect
-                sig = inspect.signature(func)
-                if len(sig.parameters) == 0:
-                    raw_result = func()
-                else:
-                    raw_result = func(context)
+            if use_context:
+                return func(context)
+            else:
+                return func()
 
-                # 处理返回值
-                if isinstance(raw_result, TaskResult):
-                    result_container["result"] = raw_result
-                elif raw_result is None or raw_result is True:
-                    result_container["result"] = TaskResult.ok()
-                elif isinstance(raw_result, dict):
-                    result_container["result"] = TaskResult.ok(data=raw_result)
-                elif isinstance(raw_result, str):
-                    result_container["result"] = TaskResult.ok(message=raw_result)
-                else:
-                    result_container["result"] = TaskResult.ok(data={"value": raw_result})
-
-            except Exception as e:
-                result_container["exception"] = e
-                result_container["traceback"] = traceback.format_exc()
-
-        thread = threading.Thread(target=target, daemon=True)
-        thread.start()
-        thread.join(timeout=timeout)
-
-        if thread.is_alive():
-            # 超时了
+        try:
+            raw_result = run_with_thread_timeout(
+                target, timeout=timeout,
+            )
+        except TaskTimeoutError:
             logger.warning(f"Task timeout: {task_def.name} (timeout={timeout}s)")
             return TaskResult.fail(
                 message=f"Task timed out after {timeout} seconds",
                 error_code=ErrorCode.TASK_TIMEOUT,
-                skip_retry=False,  # 超时可能是临时的，允许重试
+                skip_retry=False,
             )
 
-        if "exception" in result_container:
-            e = result_container["exception"]
-            raise e
-
-        return result_container.get("result", TaskResult.ok())
+        # 处理返回值
+        if isinstance(raw_result, TaskResult):
+            return raw_result
+        elif raw_result is None or raw_result is True:
+            return TaskResult.ok()
+        elif isinstance(raw_result, dict):
+            return TaskResult.ok(data=raw_result)
+        elif isinstance(raw_result, str):
+            return TaskResult.ok(message=raw_result)
+        else:
+            return TaskResult.ok(data={"value": raw_result})
 
     def _handle_success(self, task_def: TaskDefinition, context: TaskContext,
                         result: TaskResult, exec_id: int, idempotency_key: str,

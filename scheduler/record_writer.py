@@ -151,10 +151,20 @@ class RecordWriter:
 
     def get_today_stats(self) -> dict:
         """获取今日执行统计"""
+        return self.get_stats_by_date(today_str())
+
+    def get_stats_by_date(self, date_str: str) -> dict:
+        """获取指定日期的执行统计
+
+        Args:
+            date_str: 日期字符串 YYYY-MM-DD
+
+        Returns:
+            统计字典
+        """
         if not self.csv_path.exists():
             return {"total": 0, "success": 0, "failed": 0, "dlq": 0}
 
-        today = today_str()
         stats = {"total": 0, "success": 0, "failed": 0, "dlq": 0}
 
         try:
@@ -162,7 +172,7 @@ class RecordWriter:
                 reader = csv.DictReader(f)
                 for row in reader:
                     start_time = row.get("开始时间", "")
-                    if start_time.startswith(today):
+                    if start_time.startswith(date_str):
                         stats["total"] += 1
                         status = row.get("状态", "")
                         if status == "success":
@@ -172,9 +182,143 @@ class RecordWriter:
                         elif status == "dlq":
                             stats["dlq"] += 1
         except Exception as e:
-            logger.error(f"Failed to get today stats: {e}")
+            logger.error(f"Failed to get stats for {date_str}: {e}")
 
         return stats
+
+    # ─── CSV 轮转 ───────────────────────────────────────────
+
+    def rotate_if_needed(self, max_size_mb: float = 10.0) -> Optional[Path]:
+        """如果当前 CSV 文件超过大小限制，轮转为归档文件
+
+        轮转规则：
+        - 当前文件重命名为 {name}_{date}.csv
+        - 创建新文件（含 BOM 和表头）
+
+        Args:
+            max_size_mb: 最大文件大小（MB）
+
+        Returns:
+            归档文件路径，未轮转返回 None
+        """
+        if not self.csv_path.exists():
+            return None
+
+        size_mb = self.csv_path.stat().st_size / (1024 * 1024)
+        if size_mb < max_size_mb:
+            return None
+
+        # 生成归档文件名
+        date_str = today_str().replace("-", "")
+        archive_name = f"{self.csv_path.stem}_{date_str}{self.csv_path.suffix}"
+        archive_path = self.csv_path.parent / archive_name
+
+        # 如果归档文件已存在，加序号
+        counter = 1
+        while archive_path.exists():
+            archive_name = f"{self.csv_path.stem}_{date_str}_{counter}{self.csv_path.suffix}"
+            archive_path = self.csv_path.parent / archive_name
+            counter += 1
+
+        try:
+            # 重命名当前文件为归档
+            self.csv_path.rename(archive_path)
+
+            # 创建新文件
+            self._ensure_file()
+
+            logger.info(f"CSV rotated: {self.csv_path.name} -> {archive_path.name} ({size_mb:.1f}MB)")
+            return archive_path
+
+        except Exception as e:
+            logger.error(f"CSV rotation failed: {e}")
+            return None
+
+    def list_archives(self) -> list[dict]:
+        """列出所有归档文件
+
+        Returns:
+            归档文件信息列表
+        """
+        archives = []
+        parent = self.csv_path.parent
+        stem = self.csv_path.stem
+
+        if not parent.exists():
+            return archives
+
+        for f in sorted(parent.iterdir()):
+            if f.name.startswith(stem + "_") and f.suffix == self.csv_path.suffix and f != self.csv_path:
+                archives.append({
+                    "path": str(f),
+                    "name": f.name,
+                    "size_mb": round(f.stat().st_size / (1024 * 1024), 2),
+                    "records": sum(1 for _ in open(f, encoding="utf-8-sig")) - 1,
+                })
+
+        return archives
+
+    # ─── 查询接口 ───────────────────────────────────────────
+
+    def query_records(
+        self,
+        task_name: str = None,
+        status: str = None,
+        date_from: str = None,
+        date_to: str = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        """查询执行记录
+
+        Args:
+            task_name: 按任务名过滤
+            status: 按状态过滤
+            date_from: 开始日期 YYYY-MM-DD
+            date_to: 结束日期 YYYY-MM-DD
+            limit: 最大返回数
+            offset: 偏移量
+
+        Returns:
+            记录字典列表
+        """
+        if not self.csv_path.exists():
+            return []
+
+        results = []
+        skipped = 0
+
+        try:
+            with open(self.csv_path, "r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # 任务名过滤
+                    if task_name and row.get("任务名称") != task_name:
+                        continue
+                    # 状态过滤
+                    if status and row.get("状态") != status:
+                        continue
+                    # 日期范围过滤
+                    start_time = row.get("开始时间", "")
+                    if date_from and start_time < date_from:
+                        continue
+                    if date_to and start_time > date_to + " 23:59:59":
+                        continue
+
+                    # 偏移
+                    if skipped < offset:
+                        skipped += 1
+                        continue
+
+                    results.append(dict(row))
+
+                    if len(results) >= limit:
+                        break
+
+        except Exception as e:
+            logger.error(f"Query records failed: {e}")
+
+        return results
 
 
 # 全局单例

@@ -104,12 +104,49 @@ def is_windows() -> bool:
 
 # ─── 路径工具 ───────────────────────────────────────────────
 
+_project_root_override: Optional[Path] = None
+
+
+def set_project_root(root: str | Path) -> None:
+    """设置项目根目录（跨项目接入时使用）
+
+    优先级：set_project_root() > SCHEDULER_PROJECT_ROOT 环境变量 > 默认（scheduler/ 上一级）
+
+    Args:
+        root: 项目根目录路径
+    """
+    global _project_root_override
+    _project_root_override = Path(root).resolve()
+
+
 def get_project_root() -> Path:
     """获取项目根目录
 
-    从 tools/scheduler/ 往上两级即为项目根
+    优先级：
+    1. set_project_root() 编程式设置
+    2. SCHEDULER_PROJECT_ROOT 环境变量
+    3. 默认：从 scheduler/ 往上一级
+
+    Returns:
+        项目根目录 Path
     """
-    return Path(__file__).resolve().parent.parent.parent
+    global _project_root_override
+    if _project_root_override is not None:
+        return _project_root_override
+
+    env_root = os.environ.get("SCHEDULER_PROJECT_ROOT")
+    if env_root:
+        p = Path(env_root).resolve()
+        if p.is_dir():
+            return p
+
+    return Path(__file__).resolve().parent.parent
+
+
+def reset_project_root() -> None:
+    """重置项目根目录为默认值"""
+    global _project_root_override
+    _project_root_override = None
 
 
 def get_scheduler_dir() -> Path:

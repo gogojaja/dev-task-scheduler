@@ -6,7 +6,7 @@
 状态持久化、执行记录、告警通知等企业级特性。
 
 用法：
-    from tools.scheduler import register_task, get_scheduler
+    from scheduler import register_task, get_scheduler
 
     @register_task(name="my_task", trigger="cron", hour=2, minute=0)
     def my_task():

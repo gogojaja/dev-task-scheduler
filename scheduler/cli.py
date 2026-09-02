@@ -24,19 +24,22 @@ import argparse
 import sys
 import os
 import json
+import signal
+import time
+import threading
 from datetime import datetime
 from pathlib import Path
 
-# 确保项目根目录在 sys.path 中（cli.py 在 tools/scheduler/ 下，往上两级是项目根）
-_project_root = Path(__file__).resolve().parent.parent.parent
+# 确保项目根目录在 sys.path 中
+_project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 
 def cmd_start(args):
     """启动调度器"""
-    from tools.scheduler import get_scheduler, config
-    from tools.scheduler.registry import task_registry
+    from scheduler import get_scheduler, config
+    from scheduler.registry import task_registry
 
     # 加载配置
     if args.config:
@@ -59,8 +62,6 @@ def cmd_start(args):
 
         # 保持运行
         try:
-            import signal
-            import time
             stop_event = threading.Event()
 
             def handle_signal(signum, frame):
@@ -92,8 +93,8 @@ def cmd_stop(args):
 
 def cmd_status(args):
     """查看调度器状态"""
-    from tools.scheduler import get_scheduler
-    from tools.scheduler.state_store import get_state_store
+    from scheduler import get_scheduler
+    from scheduler.state_store import get_state_store
 
     store = get_state_store()
     state = store.get_scheduler_state()
@@ -108,7 +109,7 @@ def cmd_status(args):
     print()
 
     # 统计
-    from tools.scheduler.record_writer import get_record_writer
+    from scheduler.record_writer import get_record_writer
     stats = get_record_writer().get_today_stats()
     print("📈 Today's Stats")
     print("-" * 40)
@@ -120,7 +121,7 @@ def cmd_status(args):
 
 def cmd_list(args):
     """列出所有任务"""
-    from tools.scheduler.registry import task_registry
+    from scheduler.registry import task_registry
 
     tasks = task_registry.list_all()
 
@@ -141,7 +142,7 @@ def cmd_list(args):
 
 def cmd_run(args):
     """手动执行任务"""
-    from tools.scheduler import get_scheduler
+    from scheduler import get_scheduler
 
     scheduler = get_scheduler()
     result = scheduler.run_task_now(args.task_name)
@@ -165,8 +166,8 @@ def cmd_run(args):
 
 def cmd_show(args):
     """查看任务详情"""
-    from tools.scheduler.registry import task_registry
-    from tools.scheduler import get_scheduler
+    from scheduler.registry import task_registry
+    from scheduler import get_scheduler
 
     task = task_registry.get(args.task_name)
     if not task:
@@ -197,12 +198,12 @@ def cmd_show(args):
 
 def cmd_pause(args):
     """暂停任务"""
-    from tools.scheduler import get_scheduler
+    from scheduler import get_scheduler
 
     scheduler = get_scheduler()
     if not scheduler.is_running():
         # 未运行时只更新数据库状态
-        from tools.scheduler.state_store import get_state_store
+        from scheduler.state_store import get_state_store
         get_state_store().update_job_status(args.task_name, "paused")
         print(f"⏸️  Task paused (database only): {args.task_name}")
         return
@@ -216,11 +217,11 @@ def cmd_pause(args):
 
 def cmd_resume(args):
     """恢复任务"""
-    from tools.scheduler import get_scheduler
+    from scheduler import get_scheduler
 
     scheduler = get_scheduler()
     if not scheduler.is_running():
-        from tools.scheduler.state_store import get_state_store
+        from scheduler.state_store import get_state_store
         get_state_store().update_job_status(args.task_name, "active")
         print(f"▶️  Task resumed (database only): {args.task_name}")
         return
@@ -234,7 +235,7 @@ def cmd_resume(args):
 
 def cmd_history(args):
     """查看执行历史"""
-    from tools.scheduler.state_store import get_state_store
+    from scheduler.state_store import get_state_store
 
     store = get_state_store()
     records = store.list_executions(
@@ -262,7 +263,7 @@ def cmd_history(args):
 
 def cmd_stats(args):
     """查看统计信息"""
-    from tools.scheduler import get_scheduler
+    from scheduler import get_scheduler
 
     scheduler = get_scheduler()
     stats = scheduler.get_stats()
@@ -282,7 +283,7 @@ def cmd_stats(args):
 
 def cmd_dlq(args):
     """查看死信队列"""
-    from tools.scheduler.state_store import get_state_store
+    from scheduler.state_store import get_state_store
 
     store = get_state_store()
     records = store.list_executions(status="dlq", limit=args.limit)
@@ -303,6 +304,70 @@ def cmd_dlq(args):
 
     print("-" * 80)
     print(f"\n  Total in DLQ: {len(records)}")
+
+
+def cmd_cleanup(args):
+    """清理过期记录"""
+    from scheduler.state_store import get_state_store
+
+    store = get_state_store()
+    days = args.days
+
+    exec_count = store.cleanup_old_executions(days=days)
+    idem_count = store.cleanup_expired_idempotency_keys(days=days)
+
+    print(f"🧹 Cleanup complete (older than {days} days)")
+    print(f"  Execution records cleaned: {exec_count}")
+    print(f"  Idempotency keys cleaned:  {idem_count}")
+
+
+def cmd_recover(args):
+    """手动崩溃恢复"""
+    from scheduler.state_store import get_state_store
+
+    store = get_state_store()
+    summary = store.recover_from_crash()
+
+    print("🔄 Crash Recovery")
+    print("-" * 40)
+    print(f"  Recovered executions: {summary['recovered_executions']}")
+    print(f"  Recovered jobs:       {len(summary['recovered_jobs'])}")
+    print(f"  State reset:          {summary['state_reset']}")
+
+    if summary["recovered_jobs"]:
+        print(f"\n  Recovered job names:")
+        for name in summary["recovered_jobs"]:
+            print(f"    - {name}")
+
+
+def cmd_validate(args):
+    """配置校验"""
+    from scheduler.config import get_config, load_config_from_yaml, validate_config, apply_env_overrides
+
+    if args.config:
+        config = load_config_from_yaml(args.config)
+    else:
+        config = get_config()
+
+    # 应用环境变量覆盖
+    apply_env_overrides(config)
+
+    errors = validate_config(config)
+
+    if errors:
+        print(f"❌ Config validation failed with {len(errors)} error(s):")
+        for err in errors:
+            print(f"  - {err}")
+        sys.exit(1)
+    else:
+        print("✅ Config validation passed")
+        print(f"  Timezone:       {config.scheduler.timezone}")
+        print(f"  Max workers:    {config.scheduler.max_workers}")
+        print(f"  Executor:       {config.scheduler.executor_type}")
+        print(f"  Max retries:    {config.execution.default_max_retries}")
+        print(f"  Timeout:        {config.execution.default_timeout}s")
+        print(f"  Recording:      {config.recording.enabled}")
+        print(f"  Alerting:       {config.alerting.enabled}")
 
 
 def main():
@@ -367,6 +432,17 @@ Examples:
     p_dlq = subparsers.add_parser("dlq", help="Show dead letter queue")
     p_dlq.add_argument("--limit", type=int, default=20, help="Max records (default: 20)")
 
+    # cleanup
+    p_cleanup = subparsers.add_parser("cleanup", help="Clean up old records")
+    p_cleanup.add_argument("--days", type=int, default=90, help="Retention days (default: 90)")
+
+    # recover
+    subparsers.add_parser("recover", help="Manual crash recovery")
+
+    # validate
+    p_validate = subparsers.add_parser("validate", help="Validate configuration")
+    p_validate.add_argument("--config", help="Config file path (YAML)")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -386,6 +462,9 @@ Examples:
         "history": cmd_history,
         "stats": cmd_stats,
         "dlq": cmd_dlq,
+        "cleanup": cmd_cleanup,
+        "recover": cmd_recover,
+        "validate": cmd_validate,
     }
 
     func = commands.get(args.command)
@@ -397,5 +476,4 @@ Examples:
 
 
 if __name__ == "__main__":
-    import threading  # 提前导入，供 start 命令使用
     main()

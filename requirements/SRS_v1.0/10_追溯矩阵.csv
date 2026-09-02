@@ -1,0 +1,52 @@
+需求编号,需求名称,维度,SRS 章节,来源载体,来源编号,MoSCoW,优先级,状态,变更记录
+REQ-FUNC-REG-001,任务注册-装饰器方式,func,§4-功能需求,PRJ,REQ-PRJ-001,Must,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-REG-002,任务注册-YAML配置方式,func,§4-功能需求,PRJ,REQ-PRJ-002,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-REG-003,任务注册-编程式方式,func,§4-功能需求,PRJ,REQ-PRJ-003,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-SCH-001,可靠调度-cron触发器,func,§4-功能需求,PRJ,REQ-PRJ-004,Must,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-SCH-002,可靠调度-interval触发器,func,§4-功能需求,PRJ,REQ-PRJ-004,Must,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-SCH-003,可靠调度-date触发器,func,§4-功能需求,PRJ,REQ-PRJ-004,Must,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-IDM-001,幂等校验,func,§4-功能需求,PRJ,REQ-PRJ-005,Must,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-RTY-001,重试策略,func,§4-功能需求,PRJ,REQ-PRJ-006,Must,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-STS-001,状态持久化,func,§4-功能需求,PRJ,REQ-PRJ-007,Must,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-REC-001,执行记录审计,func,§4-功能需求,PRJ,REQ-PRJ-008,Must,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-ALT-001,告警通知-系统通知,func,§4-功能需求,PRJ,REQ-PRJ-009,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-ALT-002,告警通知-Webhook,func,§4-功能需求,PRJ,REQ-PRJ-009,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-TMO-001,超时控制,func,§4-功能需求,PRJ,REQ-PRJ-010,Must,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-CLI-001,CLI-前台启动调度器,func,§4-功能需求,PRJ,REQ-PRJ-013,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-CLI-002,CLI-查看状态,func,§4-功能需求,PRJ,REQ-PRJ-013,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-CLI-003,CLI-列出任务,func,§4-功能需求,PRJ,REQ-PRJ-013,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-CLI-004,CLI-手动执行,func,§4-功能需求,PRJ,REQ-PRJ-013,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-CLI-005,CLI-查看历史,func,§4-功能需求,PRJ,REQ-PRJ-013,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-CLI-006,CLI-查看统计,func,§4-功能需求,PRJ,REQ-PRJ-013,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-CLI-007,CLI-查看死信队列,func,§4-功能需求,PRJ,REQ-PRJ-013,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-PRJ-001,跨项目复用,func,§4-功能需求,ORG,REQ-ORG-001,Should,M4-v1.0核心功能开发完成,待评审,—
+REQ-FUNC-RET-001,TaskResult返回值规范,func,§4-功能需求,PRJ,REQ-PRJ-014,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-CFG-001,配置管理-YAML,func,§4-功能需求,PRJ,REQ-PRJ-015,Should,M1-启动完成/基线初始化,待评审,—
+REQ-FUNC-EXM-001,内置示例任务,func,§4-功能需求,PRJ,REQ-PRJ-016,Could,M4-v1.0核心功能开发完成,待评审,—
+REQ-NFR-PERF-001,调度延迟<1秒,if,§5-性能需求,PRJ,REQ-PRJ-004,Should,M4-v1.0核心功能开发完成,待评审,—
+REQ-NFR-PERF-002,并发任务数100+,if,§5-性能需求,PRJ,REQ-PRJ-004,Could,M5-v1.0测试通过,待评审,—
+REQ-NFR-PERF-003,SQLite写入<10ms,if,§5-性能需求,PRJ,REQ-PRJ-007,Should,M4-v1.0核心功能开发完成,待评审,—
+REQ-NFR-PERF-004,CLI响应<2秒,if,§5-性能需求,PRJ,REQ-PRJ-013,Should,M4-v1.0核心功能开发完成,待评审,—
+REQ-NFR-PERF-005,崩溃恢复<5秒,if,§5-性能需求,PRJ,REQ-PRJ-007,Should,M4-v1.0核心功能开发完成,待评审,—
+REQ-NFR-PERF-006,内存占用<200MB,if,§5-性能需求,PRJ,REQ-PRJ-011,Should,M5-v1.0测试通过,待评审,—
+REQ-SEC-CMP-001,敏感信息A级禁入库,sec,§6-设计约束,RB,REQ-RB-003,Must,M1-启动完成/基线初始化,待评审,—
+REQ-SEC-CMP-002,B级脱敏入库,sec,§6-设计约束,RB,REQ-RB-003,Must,M1-启动完成/基线初始化,待评审,—
+REQ-SEC-CMP-003,铁律卡强制生效,sec,§6-设计约束,RB,REQ-RB-001~004,Must,M1-启动完成/基线初始化,待评审,—
+REQ-SEC-CMP-004,高危操作留痕,sec,§7-质量属性,RB,REQ-RB-004,Must,M1-启动完成/基线初始化,待评审,—
+REQ-SEC-CMP-005,项目目录访问边界,sec,§6-设计约束,RB,REQ-RB-002,Must,M1-启动完成/基线初始化,待评审,—
+REQ-DATA-STG-001,SQLite状态持久化,data,§4-功能需求,PRJ,REQ-PRJ-007,Must,M1-启动完成/基线初始化,待评审,—
+REQ-DATA-STG-002,CSV执行记录审计,data,§4-功能需求,PRJ,REQ-PRJ-008,Must,M1-启动完成/基线初始化,待评审,—
+REQ-ENV-PLT-001,三平台兼容,env,§6-设计约束,PRJ,REQ-PRJ-011,Must,M1-启动完成/基线初始化,待评审,—
+REQ-ENV-PLT-002,Python 3.10+环境,env,§6-设计约束,PRJ,REQ-PRJ-011,Must,M1-启动完成/基线初始化,待评审,—
+REQ-ENV-PLT-003,APScheduler 3.11.3依赖,env,§6-设计约束,PRJ,REQ-PRJ-004,Must,M1-启动完成/基线初始化,待评审,—
+REQ-ENV-PLT-004,PROJECT_ROOT跨项目,env,§4-功能需求,ORG,REQ-ORG-001,Should,M4-v1.0核心功能开发完成,待评审,—
+REQ-IF-CLI-001,CLI 7命令接口,if,§3-外部接口,PRJ,REQ-PRJ-013,Should,M2-需求基线冻结,待评审,—
+REQ-IF-API-001,Python API注册接口,if,§3-外部接口,PRJ,REQ-PRJ-003,Should,M2-需求基线冻结,待评审,—
+REQ-IF-YML-001,YAML配置接口,if,§3-外部接口,PRJ,REQ-PRJ-002,Should,M2-需求基线冻结,待评审,—
+REQ-IF-WHK-001,Webhook通知接口,if,§3-外部接口,PRJ,REQ-PRJ-009,Should,M2-需求基线冻结,待评审,—
+REQ-IF-PIPE-001,五层管道内部接口,if,§3-外部接口,PRJ,REQ-PRJ-004,Should,M2-需求基线冻结,待评审,—
+REQ-NFR-DOC-001,文档体系完整,func,§8-其他需求,ORG,REQ-ORG-002,Should,M6-PyPI发布,待评审,—
+REQ-NFR-TST-001,单测覆盖率≥80%,nfr,§7-质量属性,ORG,REQ-PRJ-018,Should,M5-v1.0测试通过,待评审,—
+REQ-NFR-TST-002,CI矩阵三平台,nfr,§7-质量属性,ORG,REQ-PRJ-018,Should,M5-v1.0测试通过,待评审,—
+REQ-NFR-GLV-001,企业级治理体系,nfr,§8-其他需求,ORG,REQ-PRJ-019,Should,M6-PyPI发布,待评审,—
+REQ-NFR-GLV-002,需求-架构-代码追溯矩阵,nfr,§7-质量属性,RB,REQ-ORG-003,Should,M2-需求基线冻结,待评审,—

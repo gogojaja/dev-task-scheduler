@@ -259,6 +259,32 @@ class StateStore:
             version=row["version"] or "1.0.0",
         )
 
+    # ─── 任务删除 ─────────────────────────────────────────────
+
+    def delete_job(self, name: str) -> bool:
+        """删除任务定义
+
+        Returns:
+            是否成功删除
+        """
+        with self._transaction() as conn:
+            cursor = conn.execute("DELETE FROM jobs WHERE name = ?", (name,))
+            deleted = cursor.rowcount > 0
+
+        if deleted:
+            logger.info(f"Job deleted: {name}")
+        return deleted
+
+    def count_jobs(self, status: str = None) -> int:
+        """统计任务数量"""
+        conn = self._get_conn()
+        with self._lock:
+            if status:
+                cursor = conn.execute("SELECT COUNT(*) as cnt FROM jobs WHERE status = ?", (status,))
+            else:
+                cursor = conn.execute("SELECT COUNT(*) as cnt FROM jobs")
+            return cursor.fetchone()["cnt"]
+
     # ─── 执行记录 CRUD ────────────────────────────────────────
 
     def create_execution(self, record: ExecutionRecord) -> int:
@@ -329,7 +355,11 @@ class StateStore:
         if not sets:
             return False
 
-        sets.append("end_time = COALESCE(end_time, ?)" if "end_time" not in kwargs else "")
+        # 如果未显式设置 end_time，自动填充当前时间
+        if "end_time" not in kwargs:
+            sets.append("end_time = ?")
+            params.append(now().isoformat())
+
         params.append(run_id)
 
         with self._transaction() as conn:
@@ -492,6 +522,172 @@ class StateStore:
                 (now().isoformat(), now().isoformat())
             )
 
+    # ─── 崩溃恢复 ─────────────────────────────────────────────
+
+    def recover_from_crash(self) -> dict:
+        """崩溃恢复
+
+        将上次异常退出的残留状态恢复：
+        1. 将 'running' 状态的执行记录标记为 'failed'（error_code=CRASH_RECOVERY）
+        2. 将调度器状态重置为 'stopped'
+        3. 返回恢复摘要
+
+        Returns:
+            恢复摘要字典
+        """
+        recovered_executions = 0
+        recovered_jobs: list[str] = []
+
+        # 1. 恢复残留的 running 执行记录
+        with self._transaction() as conn:
+            # 查找所有 running 状态的执行记录
+            cursor = conn.execute(
+                "SELECT id, run_id, job_id FROM job_executions WHERE status = 'running'"
+            )
+            running = cursor.fetchall()
+
+            for row in running:
+                conn.execute("""
+                    UPDATE job_executions
+                    SET status = 'failed', error_code = 'CRASH_RECOVERY',
+                        error_message = 'Recovered from unexpected shutdown',
+                        end_time = ?
+                    WHERE id = ?
+                """, (now().isoformat(), row["id"]))
+                recovered_executions += 1
+
+        # 2. 恢复 running 状态的任务为 active
+        with self._transaction() as conn:
+            cursor = conn.execute(
+                "SELECT name FROM jobs WHERE status = 'running'"
+            )
+            running_jobs = cursor.fetchall()
+
+            for row in running_jobs:
+                conn.execute(
+                    "UPDATE jobs SET status = 'active', updated_at = ? WHERE name = ?",
+                    (now().isoformat(), row["name"])
+                )
+                recovered_jobs.append(row["name"])
+
+        # 3. 重置调度器状态
+        self.update_scheduler_state("stopped", heartbeat=False)
+
+        summary = {
+            "recovered_executions": recovered_executions,
+            "recovered_jobs": recovered_jobs,
+            "state_reset": True,
+        }
+
+        if recovered_executions > 0 or recovered_jobs:
+            logger.warning(
+                f"Crash recovery: {recovered_executions} executions, "
+                f"{len(recovered_jobs)} jobs recovered"
+            )
+        else:
+            logger.info("Crash recovery: no residual state found")
+
+        return summary
+
+    # ─── 统计查询 ─────────────────────────────────────────────
+
+    def get_execution_stats(self) -> dict:
+        """获取执行统计摘要
+
+        Returns:
+            统计数据字典
+        """
+        conn = self._get_conn()
+        with self._lock:
+            # 总执行次数
+            total = conn.execute(
+                "SELECT COUNT(*) as cnt FROM job_executions"
+            ).fetchone()["cnt"]
+
+            # 按状态统计
+            status_counts = {}
+            cursor = conn.execute(
+                "SELECT status, COUNT(*) as cnt FROM job_executions GROUP BY status"
+            )
+            for row in cursor.fetchall():
+                status_counts[row["status"]] = row["cnt"]
+
+            # 成功率
+            success = status_counts.get("success", 0)
+            success_rate = (success / total * 100) if total > 0 else 0.0
+
+            # 平均耗时
+            avg_duration = conn.execute(
+                "SELECT AVG(duration) as avg_d FROM job_executions WHERE duration > 0"
+            ).fetchone()["avg_d"] or 0.0
+
+            # 重试率
+            retried = conn.execute(
+                "SELECT COUNT(*) as cnt FROM job_executions WHERE retry_count > 0"
+            ).fetchone()["cnt"]
+            retry_rate = (retried / total * 100) if total > 0 else 0.0
+
+            # 死信数
+            dlq_count = status_counts.get("dlq", 0)
+
+        return {
+            "total": total,
+            "success": success,
+            "failed": status_counts.get("failed", 0),
+            "dlq": dlq_count,
+            "skipped": status_counts.get("skipped", 0),
+            "running": status_counts.get("running", 0),
+            "success_rate": round(success_rate, 2),
+            "retry_rate": round(retry_rate, 2),
+            "avg_duration": round(avg_duration, 3),
+        }
+
+    def get_task_stats(self, task_name: str) -> dict:
+        """获取单个任务的执行统计
+
+        Returns:
+            任务统计数据字典
+        """
+        conn = self._get_conn()
+        with self._lock:
+            # 获取 job_id
+            cursor = conn.execute("SELECT id FROM jobs WHERE name = ?", (task_name,))
+            job_row = cursor.fetchone()
+            if not job_row:
+                return {"error": f"Task '{task_name}' not found"}
+
+            job_id = job_row["id"]
+
+            total = conn.execute(
+                "SELECT COUNT(*) as cnt FROM job_executions WHERE job_id = ?", (job_id,)
+            ).fetchone()["cnt"]
+
+            status_counts = {}
+            cursor = conn.execute(
+                "SELECT status, COUNT(*) as cnt FROM job_executions WHERE job_id = ? GROUP BY status",
+                (job_id,)
+            )
+            for row in cursor.fetchall():
+                status_counts[row["status"]] = row["cnt"]
+
+            success = status_counts.get("success", 0)
+            success_rate = (success / total * 100) if total > 0 else 0.0
+
+            avg_duration = conn.execute(
+                "SELECT AVG(duration) as avg_d FROM job_executions WHERE job_id = ? AND duration > 0",
+                (job_id,)
+            ).fetchone()["avg_d"] or 0.0
+
+        return {
+            "task_name": task_name,
+            "total": total,
+            "success": success,
+            "failed": status_counts.get("failed", 0),
+            "dlq": status_counts.get("dlq", 0),
+            "success_rate": round(success_rate, 2),
+            "avg_duration": round(avg_duration, 3),
+        }
+
     # ─── 清理与归档 ───────────────────────────────────────────
 
     def cleanup_old_executions(self, days: int = 90) -> int:
@@ -512,6 +708,29 @@ class StateStore:
 
         if count > 0:
             logger.info(f"Cleaned up {count} old executions (older than {days} days)")
+        return count
+
+    def cleanup_expired_idempotency_keys(self, days: int = 90) -> int:
+        """清理过期的幂等键
+
+        Args:
+            days: 保留天数
+
+        Returns:
+            清理的键数
+        """
+        from datetime import timedelta
+        cutoff = now() - timedelta(days=days)
+
+        with self._transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM idempotency_keys WHERE created_at < ?",
+                (cutoff.isoformat(),)
+            )
+            count = cursor.rowcount
+
+        if count > 0:
+            logger.info(f"Cleaned up {count} expired idempotency keys (older than {days} days)")
         return count
 
     def close(self):
