@@ -1,0 +1,26 @@
+# sdist 包含的必要文件
+include README.md
+include LICENSE
+include pyproject.toml
+include requirements.txt
+
+# 文档
+recursive-include docs *.md
+
+# 示例
+recursive-include examples *.py *.yaml
+
+# CI/CD
+recursive-include .github *.yml
+
+# 排除
+global-exclude __pycache__
+global-exclude *.pyc
+global-exclude .coverage
+global-exclude *.db
+prune .secrets
+prune logs
+prune build
+prune dist
+prune tests
+prune 台账
