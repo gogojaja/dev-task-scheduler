@@ -273,12 +273,14 @@ def _update_todo_list(project_name, findings, todo_dir, date_str):
     todo_path = os.path.join(todo_dir, "pending_review_todos.md")
     items = []
     for f in findings:
-        p = f.get("priority", "低")
+        # 兼容两种格式：完整评审(priority) 和 轻量评审(severity)
+        p = f.get("priority") or {"error": "高", "warning": "中", "info": "低"}.get(f.get("severity", ""), "低")
         icon = {"高":"🔴","中":"🟡","低":"🟢"}.get(p,"⚪")
+        title = f.get("title") or f.get("description", "?")
         items.append(
-            f"- [ ] {icon} **[{project_name}]** {f.get('title','?')} "
-            f"(优先级:{p}, 类别:{f.get('category','-')}, "
-            f"工作量:{f.get('effort','-')}) — {f.get('recommendation','')[:80]}"
+            f"- [ ] {icon} **[{project_name}]** {title} "
+            f"(优先级:{p}, 类别:{f.get('category', f.get('check_type', '-'))}, "
+            f"工作量:{f.get('effort','-')}) — {f.get('recommendation', f.get('description', ''))[:80]}"
         )
     content = f"\n## 评审待办 — {date_str} ({project_name})\n\n" + "\n".join(items) + "\n"
     with open(todo_path, "a", encoding="utf-8") as f:
@@ -362,11 +364,15 @@ def _write_cross_project_summary(all_reports, output_dir, date_str):
 def nightly_project_review(context: TaskContext):
     """夜间项目评审"""
     config = {
+        "review_mode": context.params.get("review_mode", "lightweight"),
         "output_dir": context.params.get("output_dir", "~/projects/TwinForge/docs/nightly_reports/"),
         "model": context.params.get("model", "qwen2.5-coder:14b"),
         "ollama_host": context.params.get("ollama_host", "127.0.0.1"),
         "ollama_port": context.params.get("ollama_port", 11434),
         "todo_dir": context.params.get("todo_dir", "~/projects/TwinForge/docs/nightly_reports/"),
+        "cloud_api_base_url": context.params.get("cloud_api_base_url", ""),
+        "cloud_api_key": context.params.get("cloud_api_key", ""),
+        "cloud_api_model": context.params.get("cloud_api_model", ""),
     }
     output_dir = os.path.expanduser(config["output_dir"])
     todo_dir = os.path.expanduser(config["todo_dir"])
@@ -375,6 +381,7 @@ def nightly_project_review(context: TaskContext):
     start_time = time.time()
     date_str = datetime.now().strftime("%Y%m%d")
 
+    # ── Ollama 连接（所有模式都需要）──
     try:
         from executor.ollama_client import OllamaClient
         client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
@@ -383,17 +390,210 @@ def nightly_project_review(context: TaskContext):
     except Exception as e:
         return TaskResult.fail(message=f"Ollama 连接失败: {e}", error_code="SCH-REVIEW-002")
 
-    try:
-        from executor.prompts.document_review import SYSTEM_PROMPT, USER_TEMPLATE
-    except ImportError as e:
-        return TaskResult.fail(message=f"prompt 模板未找到: {e}", error_code="SCH-REVIEW-003")
+    # ── 模式路由 ──
+    mode = config["review_mode"]
+    logger.info("评审模式: %s", mode)
+
+    if mode == "lightweight":
+        result = _run_lightweight_review(
+            client, config, PROJECT_REGISTRY, output_dir, todo_dir, date_str,
+        )
+    elif mode == "cascade":
+        result = _run_cascade_review(
+            client, config, PROJECT_REGISTRY, output_dir, todo_dir, date_str,
+        )
+    else:  # original
+        result = _run_original_review(
+            client, config, PROJECT_REGISTRY, output_dir, todo_dir, date_str,
+        )
+
+    duration = time.time() - start_time
+    result["duration_s"] = duration
+    result["review_mode"] = mode
+
+    return TaskResult.ok(
+        message=f"[{mode}] 项目评审完成: {result.get('projects_reviewed', 0)} 项目, "
+                f"{result.get('total_findings', 0)} 项发现, 耗时 {duration:.0f}s",
+        data=result,
+    )
+
+
+# ── Mode A: 轻量评审（14B 逐文档结构/一致性/完整性检查）──
+
+def _run_lightweight_review(client, config, projects, output_dir, todo_dir, date_str):
+    """轻量评审：14B 做结构校验 + 引用一致性 + 完整性清单"""
+    from executor.prompts.lightweight_review import (
+        SYSTEM_PROMPT, USER_TEMPLATE, get_checklist,
+    )
 
     all_reports = []
     total_findings = 0
 
-    for project in PROJECT_REGISTRY:
+    for project in projects:
         pname = project["name"]
-        logger.info("开始评审项目: %s", pname)
+        logger.info("[轻量] 开始评审项目: %s", pname)
+        project_findings = []
+
+        for doc_spec in project["documents"]:
+            doc_content = _read_document(
+                project["base_path"], doc_spec["path"],
+            )
+            if doc_content.startswith("[文件不存在") or doc_content.startswith("[读取失败"):
+                project_findings.append({
+                    "check_type": "completeness",
+                    "severity": "error",
+                    "location": doc_spec["path"],
+                    "description": doc_content,
+                    "source": "local",
+                })
+                continue
+
+            checklist = get_checklist(doc_spec["type"])
+            prompt = USER_TEMPLATE.format(
+                document_path=doc_spec["path"],
+                document_type=doc_spec["type"],
+                checklist=checklist,
+                document_content=doc_content,
+            )
+            try:
+                resp = client.generate(
+                    model=config["model"], prompt=prompt,
+                    system=SYSTEM_PROMPT, task_type="document_review",
+                )
+                parsed = _parse_review_json(resp.text)
+                findings = parsed.get("findings", [])
+                for f in findings:
+                    f["source"] = "local"
+                project_findings.extend(findings)
+            except Exception as e:
+                logger.warning("[轻量] 文档扫描失败 [%s/%s]: %s", pname, doc_spec["path"], e)
+
+        # 写轻量报告
+        rev_path = _write_lightweight_report(pname, project_findings, output_dir, date_str)
+        todo_path = _update_todo_list(pname, project_findings, todo_dir, date_str)
+
+        errors = sum(1 for f in project_findings if f.get("severity") == "error")
+        warnings = sum(1 for f in project_findings if f.get("severity") == "warning")
+        total_findings += len(project_findings)
+        all_reports.append({
+            "project": pname, "findings_count": len(project_findings),
+            "high_priority": errors,
+            "overall_score": "-",
+            "reports": {"lightweight": rev_path, "todo": todo_path},
+        })
+        logger.info("[轻量] 项目 %s 评审完成: %d 项发现 (error=%d, warning=%d)",
+                     pname, len(project_findings), errors, warnings)
+
+    summary_path = _write_cross_project_summary(all_reports, output_dir, date_str)
+    return {
+        "projects_reviewed": len(projects), "total_findings": total_findings,
+        "reports": all_reports, "summary_report": summary_path,
+    }
+
+
+# ── Mode B: 级联评审（14B Phase1 + 云端 Phase2）──
+
+def _run_cascade_review(client, config, projects, output_dir, todo_dir, date_str):
+    """级联评审：Phase1 轻量扫描 → Phase2 云端深度评审"""
+    from executor.cloud_client import CloudClient
+    from executor.staged_review import StagedReviewCoordinator
+
+    cloud = CloudClient(
+        base_url=config.get("cloud_api_base_url", ""),
+        api_key=config.get("cloud_api_key", ""),
+        model=config.get("cloud_api_model", ""),
+    )
+
+    coordinator = StagedReviewCoordinator(
+        ollama_client=client,
+        cloud_client=cloud if cloud.is_configured else None,
+        local_model=config["model"],
+    )
+
+    all_reports = []
+    total_findings = 0
+
+    for project in projects:
+        pname = project["name"]
+        logger.info("[级联] 开始评审项目: %s", pname)
+
+        # 读取文档
+        documents = []
+        for doc_spec in project["documents"]:
+            content = _read_document(project["base_path"], doc_spec["path"])
+            documents.append({
+                "path": doc_spec["path"],
+                "type": doc_spec["type"],
+                "content": content,
+            })
+
+        # 执行级联评审
+        try:
+            result = coordinator.run(
+                project_name=pname,
+                documents=documents,
+                project_description=project["description"],
+            )
+        except Exception as e:
+            logger.error("[级联] 项目 %s 评审失败: %s", pname, e)
+            continue
+
+        # 写报告
+        findings = result.merged_findings
+        summary = result.merged_summary
+        docs_reviewed = [{"path": d["path"], "type": d["type"]} for d in documents]
+
+        # Phase 1 轻量报告
+        lw_path = _write_lightweight_report(
+            pname, result.phase1_findings, output_dir, date_str,
+        )
+        # 完整评审报告
+        rev_path = _write_review_report(
+            pname, findings, summary, docs_reviewed, output_dir, date_str,
+        )
+        opt_path = _write_optimization_report(pname, findings, output_dir, date_str)
+        mod_path = _write_modification_plan(pname, findings, output_dir, date_str)
+        todo_path = _update_todo_list(pname, findings, todo_dir, date_str)
+
+        # Phase 2 降级标记
+        if result.phase2_degraded:
+            logger.warning("[级联] 项目 %s Phase 2 降级: %s", pname, result.phase2_error)
+
+        total_findings += len(findings)
+        all_reports.append({
+            "project": pname, "findings_count": len(findings),
+            "high_priority": summary.get("high_priority", 0),
+            "overall_score": summary.get("overall_score", "-"),
+            "phase2_degraded": result.phase2_degraded,
+            "reports": {
+                "lightweight": lw_path, "review": rev_path,
+                "optimization": opt_path, "modification": mod_path,
+                "todo": todo_path,
+            },
+        })
+        logger.info("[级联] 项目 %s 评审完成: %d 项发现 (P1=%d P2=%d 降级=%s)",
+                     pname, len(findings), len(result.phase1_findings),
+                     len(result.phase2_findings), result.phase2_degraded)
+
+    summary_path = _write_cross_project_summary(all_reports, output_dir, date_str)
+    return {
+        "projects_reviewed": len(projects), "total_findings": total_findings,
+        "reports": all_reports, "summary_report": summary_path,
+    }
+
+
+# ── Mode C: 原始评审（向后兼容）──
+
+def _run_original_review(client, config, projects, output_dir, todo_dir, date_str):
+    """原始评审：14B 全量评审（现有行为）"""
+    from executor.prompts.document_review import SYSTEM_PROMPT, USER_TEMPLATE
+
+    all_reports = []
+    total_findings = 0
+
+    for project in projects:
+        pname = project["name"]
+        logger.info("[原始] 开始评审项目: %s", pname)
 
         docs_content = _build_documents_content(project["base_path"], project["documents"])
         prompt = USER_TEMPLATE.format(
@@ -431,11 +631,58 @@ def nightly_project_review(context: TaskContext):
         })
         logger.info("项目 %s 评审完成: %d 项发现", pname, len(findings))
 
-    duration = time.time() - start_time
     summary_path = _write_cross_project_summary(all_reports, output_dir, date_str)
+    return {
+        "projects_reviewed": len(projects), "total_findings": total_findings,
+        "reports": all_reports, "summary_report": summary_path,
+    }
 
-    return TaskResult.ok(
-        message=f"项目评审完成: {len(PROJECT_REGISTRY)} 项目, {total_findings} 项发现, 耗时 {duration:.0f}s",
-        data={"projects_reviewed": len(PROJECT_REGISTRY), "total_findings": total_findings,
-              "reports": all_reports, "summary_report": summary_path, "duration_s": duration},
-    )
+
+# ── 轻量报告写入 ──
+
+def _write_lightweight_report(project_name, findings, output_dir, date_str):
+    """写轻量评审报告（Mode A/B Phase1）"""
+    errors = [f for f in findings if f.get("severity") == "error"]
+    warnings = [f for f in findings if f.get("severity") == "warning"]
+    infos = [f for f in findings if f.get("severity") == "info"]
+
+    lines = [
+        f"# {project_name} 轻量评审报告 — {date_str}", "",
+        f"> 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "> 评审模式: 轻量评审（结构校验 + 引用一致性 + 完整性清单）", "",
+        "## 概览", "",
+        f"- **发现总数**: {len(findings)}",
+        f"  - 🔴 Error: {len(errors)}",
+        f"  - 🟡 Warning: {len(warnings)}",
+        f"  - 🟢 Info: {len(infos)}", "",
+    ]
+
+    if errors:
+        lines.extend(["## 🔴 Error（必须修复）", ""])
+        for f in errors:
+            lines.append(f"- **[{f.get('check_type', '?')}]** {f.get('location', '?')}: "
+                         f"{f.get('description', '')}")
+        lines.append("")
+
+    if warnings:
+        lines.extend(["## 🟡 Warning（建议修复）", ""])
+        for f in warnings:
+            lines.append(f"- **[{f.get('check_type', '?')}]** {f.get('location', '?')}: "
+                         f"{f.get('description', '')}")
+        lines.append("")
+
+    if infos:
+        lines.extend(["## 🟢 Info（可选改进）", ""])
+        for f in infos:
+            lines.append(f"- **[{f.get('check_type', '?')}]** {f.get('location', '?')}: "
+                         f"{f.get('description', '')}")
+        lines.append("")
+
+    if not findings:
+        lines.extend(["未发现评审问题。", ""])
+
+    lines.extend(["---", "*由 dev-model-router + dev-task-scheduler 自动生成*"])
+    path = os.path.join(output_dir, f"{date_str}_{project_name}_轻量评审报告.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return path
