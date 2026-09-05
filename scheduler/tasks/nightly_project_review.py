@@ -697,20 +697,65 @@ def nightly_project_review_14b(context: TaskContext):
     return _nightly_project_review_impl(context)
 
 
-# ── 任务注册：cascade 级联评审（每日 05:00）──
+# ── 任务注册：cascade 级联评审（每日 02:00，折扣时段）──
 
 @register_task(
     name="nightly_project_review_cascade",
     trigger="cron",
     hour=2,
     minute=0,
-    description="cascade 级联评审（14B + 云端 API，每日 02:00）",
+    description="cascade 级联评审（14B + 折扣云端 API，每日 02:00）",
     idempotency_key="{date}-cascade",
     timeout=3600,
     max_retries=1,
 )
 def nightly_project_review_cascade(context: TaskContext):
-    """cascade 级联评审：强制 cascade 模式"""
+    """cascade 级联评审：使用定价管理器选择折扣时段最优模型"""
     if hasattr(context, 'params') and isinstance(context.params, dict):
         context.params["review_mode"] = "cascade"
+        # 使用定价管理器选择当前时段最优云端模型
+        try:
+            from executor.model_pricing import ModelPricingManager
+            mgr = ModelPricingManager()
+            best = mgr.select_best_model()
+            if best:
+                context.params["cloud_api_model"] = best.model_id
+                logger.info("cascade 选择模型: %s (%s)", best.display_name, best.model_id)
+        except ImportError:
+            logger.warning("model_pricing 模块不可用，使用默认模型")
+    return _nightly_project_review_impl(context)
+
+
+# ── 任务注册：免费模型评审（每日 22:00）──
+
+@register_task(
+    name="nightly_project_review_free",
+    trigger="cron",
+    hour=22,
+    minute=0,
+    description="免费模型评审（22:00 免费时段开始）",
+    idempotency_key="{date}-free",
+    timeout=3600,
+    max_retries=1,
+)
+def nightly_project_review_free(context: TaskContext):
+    """免费模型评审：使用免费 API 模型"""
+    if hasattr(context, 'params') and isinstance(context.params, dict):
+        context.params["review_mode"] = "cascade"
+        # 选择当前可用的免费模型
+        try:
+            from executor.model_pricing import ModelPricingManager
+            mgr = ModelPricingManager()
+            free_models = mgr.get_free_models()
+            if free_models:
+                best_free = free_models[0]
+                context.params["cloud_api_model"] = best_free.model_id
+                logger.info("免费模型选择: %s (%s)", best_free.display_name, best_free.model_id)
+            else:
+                logger.warning("当前无免费模型可用，回退到折扣模型")
+                best = mgr.select_best_model()
+                if best:
+                    context.params["cloud_api_model"] = best.model_id
+        except ImportError:
+            logger.warning("model_pricing 模块不可用，使用默认模型")
     return _nightly_project_review_impl(context)
