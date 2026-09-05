@@ -702,9 +702,9 @@ def nightly_project_review_14b(context: TaskContext):
 @register_task(
     name="nightly_project_review_cascade",
     trigger="cron",
-    hour=5,
+    hour=2,
     minute=0,
-    description="cascade 级联评审（14B + 云端 API，每日 05:00）",
+    description="cascade 级联评审（14B + 云端 API，每日 02:00）",
     idempotency_key="{date}-cascade",
     timeout=3600,
     max_retries=1,
