@@ -30,8 +30,57 @@ from ..registry import register_task
 from ..models import TaskResult, TaskContext
 from .target_scanner import TargetScanner
 from .report_writer import NightlyReportWriter
+from .circuit_breaker import CircuitBreaker
 
 logger = logging.getLogger(__name__)
+
+
+# ── 环境预检 + 熔断器（四层保护集成） ──
+
+def _get_circuit_breaker(config: Dict[str, Any]) -> CircuitBreaker:
+    """从配置获取熔断器实例"""
+    cb_cfg = config.get("circuit_breaker", {})
+    csv_path = cb_cfg.get("csv_path", "~/projects/TwinForge/docs/nightly_reports/circuit_breaker.csv")
+    threshold = cb_cfg.get("failure_threshold", 3)
+    return CircuitBreaker(csv_path=csv_path, failure_threshold=threshold)
+
+
+def _check_circuit(task_name: str, config: Dict[str, Any]) -> Optional[TaskResult]:
+    """检查熔断器，如果已熔断返回 fail TaskResult，否则返回 None"""
+    if not config.get("circuit_breaker", {}).get("enabled", True):
+        return None
+    try:
+        cb = _get_circuit_breaker(config)
+        if not cb.should_execute(task_name):
+            states = cb.get_all_states()
+            detail = ""
+            for s in states:
+                if s.task_name == task_name:
+                    detail = s.detail
+                    break
+            logger.warning("[circuit_breaker] %s is OPEN, skipping: %s", task_name, detail)
+            return TaskResult.fail(
+                message=f"任务 {task_name} 已熔断（连续失败 >= 阈值）: {detail}",
+                error_code="CB-OPEN",
+                skip_retry=True,
+            )
+    except Exception as e:
+        logger.warning("[circuit_breaker] check failed: %s", e)
+    return None
+
+
+def _record_task_result(task_name: str, success: bool, config: Dict[str, Any], detail: str = ""):
+    """记录任务执行结果到熔断器"""
+    if not config.get("circuit_breaker", {}).get("enabled", True):
+        return
+    try:
+        cb = _get_circuit_breaker(config)
+        if success:
+            cb.record_success(task_name)
+        else:
+            cb.record_failure(task_name, detail)
+    except Exception as e:
+        logger.warning("[circuit_breaker] record failed: %s", e)
 
 
 # ── 可选模块导入（优雅降级）──
@@ -266,6 +315,11 @@ def nightly_code_review(context: TaskContext):
     config = _get_config(context)
     start_time = time.time()
 
+    # 熔断器检查（Layer 3）
+    cb_result = _check_circuit("nightly_code_review", config)
+    if cb_result:
+        return cb_result
+
     # Ollama 连接检查
     try:
         from executor.ollama_client import OllamaClient
@@ -385,7 +439,7 @@ def nightly_code_review(context: TaskContext):
     except ImportError:
         pass
 
-    return TaskResult.ok(
+    result = TaskResult.ok(
         message=f"代码走查完成: {len(files)} 文件, {total_issues} 问题, "
                 f"{security_alerts} 安全告警, {defects_registered} 缺陷已登记, "
                 f"耗时 {duration:.0f}s",
@@ -396,6 +450,8 @@ def nightly_code_review(context: TaskContext):
             "report_path": report_path, "duration_s": duration,
         },
     )
+    _record_task_result("nightly_code_review", True, config)
+    return result
 
 
 # ══════════════════════════════════════════════════════════════
@@ -417,13 +473,20 @@ def nightly_code_completion(context: TaskContext):
     config = _get_config(context)
     start_time = time.time()
 
+    # 熔断器检查（Layer 3）
+    cb_result = _check_circuit("nightly_code_completion", config)
+    if cb_result:
+        return cb_result
+
     try:
         from executor.ollama_client import OllamaClient
         client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
         if not client.is_available():
+            _record_task_result("nightly_code_completion", False, config, "Ollama unavailable")
             return TaskResult.fail(message="Ollama 服务不可用",
                                    error_code="SCH-NIGHT-001", skip_retry=True)
     except Exception as e:
+        _record_task_result("nightly_code_completion", False, config, str(e)[:100])
         return TaskResult.fail(message=f"Ollama 连接失败: {e}", error_code="SCH-NIGHT-002")
 
     scanner = TargetScanner(
@@ -489,12 +552,14 @@ def nightly_code_completion(context: TaskContext):
     )
     _write_audit("code_completion", f"{len(files)} files, {total_markers} markers")
 
-    return TaskResult.ok(
+    result = TaskResult.ok(
         message=f"代码补全完成: {len(files)} 文件, {total_markers} 个标记, "
                 f"耗时 {duration:.0f}s",
         data={"files_processed": len(files), "markers_found": total_markers,
               "report_path": report_path, "duration_s": duration},
     )
+    _record_task_result("nightly_code_completion", True, config)
+    return result
 
 
 # ══════════════════════════════════════════════════════════════
@@ -516,13 +581,20 @@ def nightly_test_generation(context: TaskContext):
     config = _get_config(context)
     start_time = time.time()
 
+    # 熔断器检查（Layer 3）
+    cb_result = _check_circuit("nightly_test_generation", config)
+    if cb_result:
+        return cb_result
+
     try:
         from executor.ollama_client import OllamaClient
         client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
         if not client.is_available():
+            _record_task_result("nightly_test_generation", False, config, "Ollama unavailable")
             return TaskResult.fail(message="Ollama 服务不可用",
                                    error_code="SCH-NIGHT-001", skip_retry=True)
     except Exception as e:
+        _record_task_result("nightly_test_generation", False, config, str(e)[:100])
         return TaskResult.fail(message=f"Ollama 连接失败: {e}", error_code="SCH-NIGHT-002")
 
     runner_mod, defect_mod, coverage_mod = _try_import_test_tools()
@@ -644,7 +716,7 @@ def nightly_test_generation(context: TaskContext):
     _write_audit("test_generation",
                  f"{len(files)} files, {tests_passed} pass, {tests_failed} fail")
 
-    return TaskResult.ok(
+    result = TaskResult.ok(
         message=f"测试生成完成: {len(files)} 文件, "
                 f"通过 {tests_passed}/失败 {tests_failed}/保存 {tests_saved}, "
                 f"耗时 {duration:.0f}s",
@@ -655,6 +727,8 @@ def nightly_test_generation(context: TaskContext):
             "report_path": report_path, "duration_s": duration,
         },
     )
+    _record_task_result("nightly_test_generation", True, config)
+    return result
 
 
 def _find_existing_tests(source_path: str) -> List[str]:
