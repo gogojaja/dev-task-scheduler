@@ -113,3 +113,30 @@ class TargetScanner:
             if fnmatch.fnmatch(name, pattern):
                 return True
         return False
+
+    def filter_without_tests(self, files: List[FileInfo]) -> List[FileInfo]:
+        """
+        过滤出没有对应测试文件的源文件。
+
+        约定：源文件 foo.py 的测试文件为 test_foo.py（同目录或 tests/ 子目录）。
+
+        Args:
+            files: 全量文件列表
+
+        Returns:
+            缺少测试文件的 FileInfo 列表
+        """
+        # 收集所有测试文件名
+        test_files = set()
+        for f in files:
+            if f.name.startswith("test_") and f.name.endswith(".py"):
+                test_files.add(f.name)
+
+        result = []
+        for f in files:
+            if f.name.startswith("test_"):
+                continue  # 跳过测试文件本身
+            expected_test = f"test_{f.name}"
+            if expected_test not in test_files:
+                result.append(f)
+        return result
