@@ -351,17 +351,7 @@ def _write_cross_project_summary(all_reports, output_dir, date_str):
 
 # ── 主任务 ──
 
-@register_task(
-    name="nightly_project_review",
-    trigger="cron",
-    hour=5,
-    minute=0,
-    description="夜间项目文档评审：依据行业最佳实践对各项目进行第三方评审",
-    idempotency_key="{date}",
-    timeout=3600,
-    max_retries=1,
-)
-def nightly_project_review(context: TaskContext):
+def _nightly_project_review_impl(context: TaskContext):
     """夜间项目评审"""
     config = {
         "review_mode": context.params.get("review_mode", "lightweight"),
@@ -686,3 +676,41 @@ def _write_lightweight_report(project_name, findings, output_dir, date_str):
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     return path
+
+
+# ── 任务注册：14B 轻量评审（每日 18:00）──
+
+@register_task(
+    name="nightly_project_review_14b",
+    trigger="cron",
+    hour=18,
+    minute=0,
+    description="14B 轻量评审（本地模型，每日 18:00）",
+    idempotency_key="{date}-14b",
+    timeout=3600,
+    max_retries=1,
+)
+def nightly_project_review_14b(context: TaskContext):
+    """14B 轻量评审：强制 lightweight 模式"""
+    if hasattr(context, 'params') and isinstance(context.params, dict):
+        context.params["review_mode"] = "lightweight"
+    return _nightly_project_review_impl(context)
+
+
+# ── 任务注册：cascade 级联评审（每日 05:00）──
+
+@register_task(
+    name="nightly_project_review_cascade",
+    trigger="cron",
+    hour=5,
+    minute=0,
+    description="cascade 级联评审（14B + 云端 API，每日 05:00）",
+    idempotency_key="{date}-cascade",
+    timeout=3600,
+    max_retries=1,
+)
+def nightly_project_review_cascade(context: TaskContext):
+    """cascade 级联评审：强制 cascade 模式"""
+    if hasattr(context, 'params') and isinstance(context.params, dict):
+        context.params["review_mode"] = "cascade"
+    return _nightly_project_review_impl(context)
