@@ -262,6 +262,16 @@ class TaskRegistry:
 
         module_prefix = dir_path.name
 
+        # 如果父目录本身是 Python 包，使用完整路径（如 scheduler.tasks.xxx）
+        # 以保留相对导入链
+        grandparent = dir_path.parent.parent
+        parent_init = dir_path.parent / '__init__.py'
+        if parent_init.exists():
+            gp_str = str(grandparent)
+            if gp_str not in sys.path:
+                sys.path.insert(0, gp_str)
+            module_prefix = f'{dir_path.parent.name}.{dir_path.name}'
+
         for py_file in sorted(dir_path.glob("*.py")):
             if py_file.name.startswith("_"):
                 continue  # 跳过 __init__.py 等

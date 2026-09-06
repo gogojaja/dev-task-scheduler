@@ -210,7 +210,7 @@ def load_config_from_yaml(config_path: str | Path) -> AppConfig:
 
 def resolve_path(path_str: str) -> Path:
     """解析相对路径为绝对路径（相对于项目根）"""
-    p = Path(path_str)
+    p = Path(os.path.expanduser(path_str))
     if p.is_absolute():
         return p
     return get_project_root() / p

@@ -87,8 +87,8 @@ class SchedulerManager:
                 # 配置执行器
                 if config.scheduler.executor_type == "threadpool":
                     self._scheduler.add_executor(
-                        "default",
                         "threadpool",
+                        "default",
                         max_workers=config.scheduler.max_workers,
                     )
 
