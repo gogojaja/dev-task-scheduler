@@ -2,6 +2,8 @@
 
 提取近 24h 的 commit messages，调用 14B 模型审查 Conventional Commits 合规性。
 """
+from ..registry import register_task
+
 import json
 import os
 import subprocess
@@ -9,6 +11,11 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 
+@register_task(
+    name="nightly_commit_review",
+    trigger="cron", hour=4, minute=15,
+    description="nightly_commit_review",
+)
 def run_commit_review(config: Dict[str, Any]) -> Dict[str, Any]:
     """执行 commit message 审查
     

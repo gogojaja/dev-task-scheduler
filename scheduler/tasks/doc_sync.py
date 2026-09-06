@@ -2,6 +2,8 @@
 
 扫描 git diff，对比代码变更与文档修改时间，生成「文档过期清单」。
 """
+from ..registry import register_task
+
 import json
 import os
 import re
@@ -10,6 +12,11 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 
+@register_task(
+    name="nightly_doc_sync",
+    trigger="cron", hour=2, minute=0,
+    description="nightly_doc_sync",
+)
 def run_doc_sync(config: Dict[str, Any]) -> Dict[str, Any]:
     """执行文档同步检查
     

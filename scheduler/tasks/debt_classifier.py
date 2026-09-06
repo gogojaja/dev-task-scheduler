@@ -2,6 +2,8 @@
 
 扫描代码中的 TODO 标记，调用 14B 模型进行分类和优先级排序。
 """
+from ..registry import register_task
+
 import json
 import os
 import re
@@ -9,6 +11,11 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 
+@register_task(
+    name="nightly_debt_classify",
+    trigger="cron", day_of_week="mon", hour=4, minute=30,
+    description="nightly_debt_classify",
+)
 def run_debt_classify(config: Dict[str, Any]) -> Dict[str, Any]:
     """执行技术债务分类
     

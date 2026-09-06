@@ -2,6 +2,8 @@
 
 正则提取 Markdown 链接 + HTTP HEAD 验证。
 """
+from ..registry import register_task
+
 import json
 import os
 import re
@@ -12,6 +14,11 @@ from typing import Any, Dict, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
+@register_task(
+    name="nightly_link_check",
+    trigger="cron", day_of_week="fri", hour=4, minute=0,
+    description="nightly_link_check",
+)
 def run_link_check(config: Dict[str, Any]) -> Dict[str, Any]:
     """执行链接检查
     

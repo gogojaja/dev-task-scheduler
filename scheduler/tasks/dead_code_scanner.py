@@ -2,6 +2,8 @@
 
 扫描项目中的未使用函数/类/变量/导入。
 """
+from ..registry import register_task
+
 import json
 import os
 import subprocess
@@ -9,6 +11,11 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 
+@register_task(
+    name="nightly_dead_code",
+    trigger="cron", day_of_week="mon", hour=4, minute=0,
+    description="nightly_dead_code",
+)
 def run_dead_code_scan(config: Dict[str, Any]) -> Dict[str, Any]:
     """执行死代码扫描
     

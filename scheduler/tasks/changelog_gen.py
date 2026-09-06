@@ -2,6 +2,8 @@
 
 解析 Conventional Commits，按类型分组，追加到各项目的 CHANGELOG.md。
 """
+from ..registry import register_task
+
 import json
 import os
 import re
@@ -24,6 +26,11 @@ TYPE_LABELS = {
 }
 
 
+@register_task(
+    name="nightly_changelog_gen",
+    trigger="cron", hour=2, minute=15,
+    description="nightly_changelog_gen",
+)
 def run_changelog_gen(config: Dict[str, Any]) -> Dict[str, Any]:
     """生成 Changelog
     

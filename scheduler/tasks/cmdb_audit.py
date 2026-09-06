@@ -12,6 +12,8 @@
 依赖：TwinForge/scripts/cmdb_audit.py（纯工具脚本，无 LLM 依赖）
 """
 
+from ..registry import register_task
+
 import importlib.util
 import json
 import os
@@ -21,6 +23,11 @@ from pathlib import Path
 from typing import Any, Dict
 
 
+@register_task(
+    name="nightly_cmdb_audit",
+    trigger="cron", day_of_week="sun", hour=4, minute=45,
+    description="nightly_cmdb_audit",
+)
 def run_cmdb_audit(config: Dict[str, Any]) -> Dict[str, Any]:
     """执行 CMDB 一致性审计
 

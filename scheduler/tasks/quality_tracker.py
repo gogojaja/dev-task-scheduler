@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from ..registry import register_task
+
 import csv
 import json
 import os
@@ -247,3 +249,20 @@ class QualityTracker:
         if total == 0:
             return "N/A"
         return f"{passed * 100 / total:.1f}%"
+
+
+@register_task(
+    name="nightly_quality_report",
+    trigger="cron",
+    hour=5,
+    minute=0,
+    description="nightly_quality_report",
+)
+def run_quality_report(config: dict) -> str:
+    """生成质量趋势报告"""
+    output_dir = os.path.expanduser(
+        config.get('output_dir', '~/projects/TwinForge/docs/nightly_reports/')
+    )
+    tracker = QualityTracker(output_dir=output_dir)
+    report_path = tracker.write_trend_report()
+    return f'Quality report generated: {report_path}'

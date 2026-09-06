@@ -2,6 +2,8 @@
 
 扫描 requirements.txt 中的已知 CVE 漏洞。
 """
+from ..registry import register_task
+
 import json
 import os
 import subprocess
@@ -9,6 +11,11 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 
+@register_task(
+    name="nightly_dep_scan",
+    trigger="cron", day_of_week="wed", hour=4, minute=0,
+    description="nightly_dep_scan",
+)
 def run_dep_scan(config: Dict[str, Any]) -> Dict[str, Any]:
     """执行依赖漏洞扫描
     
