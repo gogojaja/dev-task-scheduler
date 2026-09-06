@@ -129,6 +129,11 @@ class QualityTracker:
         breaker_lines = self._render_breaker_section()
         lines.extend(breaker_lines)
 
+        # Layer 4: CMDB 健康状态
+        lines.extend(["", "## CMDB 健康状态", ""])
+        cmdb_lines = self._render_cmdb_section(date_str)
+        lines.extend(cmdb_lines)
+
         lines.extend(["", "---", "*由 quality_tracker 自动生成*"])
 
         report_path = os.path.join(self.output_dir, f"{date_str}_质量趋势报告.md")
@@ -187,6 +192,52 @@ class QualityTracker:
             return lines
         except Exception:
             return ["*熔断器状态读取失败*"]
+
+    def _render_cmdb_section(self, date_str: str) -> List[str]:
+        """Read latest CMDB audit report and render health status."""
+        json_path = os.path.join(
+            self.output_dir, "cmdb_audit_" + date_str.replace("-", "") + ".json"
+        )
+        if not os.path.isfile(json_path):
+            for days_back in range(1, 8):
+                alt_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
+                alt_path = os.path.join(self.output_dir, "cmdb_audit_" + alt_date + ".json")
+                if os.path.isfile(alt_path):
+                    json_path = alt_path
+                    break
+            else:
+                return ["*CMDB audit report not yet generated*", ""]
+        try:
+            with open(json_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            summary = data.get("summary", {})
+            checks = data.get("checks", [])
+            suggestions = data.get("suggestions", [])
+            audit_time = data.get("audit_time", "unknown")
+            match_count = summary.get("match", 0)
+            drift_count = summary.get("drift", 0)
+            missing_count = summary.get("missing", 0)
+            total = summary.get("total_checks", 0)
+            status_icon = "PASS" if drift_count == 0 and missing_count == 0 else "DRIFT"
+            lines = [
+                "- Audit time: " + audit_time,
+                "- Status: " + status_icon + " (" + str(match_count) + "/" + str(total) + " match, " + str(drift_count) + " drift, " + str(missing_count) + " missing)",
+                "",
+                "| Type | Target | Status |",
+                "|------|--------|--------|",
+            ]
+            for c in checks:
+                icon = {"MATCH": "OK", "DRIFT": "WARN", "MISSING": "FAIL"}.get(c.get("status", ""), "?")
+                lines.append("| " + c.get("type", "-") + " | " + c.get("target", "-") + " | " + icon + " |")
+            if suggestions:
+                lines.extend(["", "**Pending suggestions (" + str(len(suggestions)) + "):**"])
+                for s in suggestions[:5]:
+                    lines.append("- " + s)
+                if len(suggestions) > 5:
+                    lines.append("- ... and " + str(len(suggestions) - 5) + " more")
+            return lines
+        except Exception:
+            return ["*CMDB audit report read failed*"]
 
     @staticmethod
     def _calc_pass_rate(record: Dict) -> str:
