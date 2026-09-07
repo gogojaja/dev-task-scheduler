@@ -2,10 +2,10 @@
 夜间代码质量任务（v2 — 增量扫描 + 安全扫描 + 测试执行 + 缺陷登记）
 
 三个可调度的代码任务：
-- nightly_code_review: 代码走查 + 安全扫描 + 缺陷/RAID 登记（10:00）
-- nightly_code_completion: TODO/FIXME 感知补全（11:00）
-- nightly_test_generation: 测试生成 + 执行验证 + 覆盖率（14:00）
-- nightly_quality_report: 质量趋势汇总（04:45）
+- code_review: 代码走查 + 安全扫描 + 缺陷/RAID 登记（10:00）
+- code_completion: TODO/FIXME 感知补全（11:00）
+- test_generation: 测试生成 + 执行验证 + 覆盖率（14:00）
+- quality_report: 质量趋势汇总（04:45）
 """
 
 from __future__ import annotations
@@ -249,7 +249,7 @@ def _register_defect(issue: Dict, file_path: str) -> bool:
             title=f"[代码走查] {file_path}: {issue.get('description', '')[:60]}",
             severity="高" if issue.get("severity") == "阻断" else "中",
             priority="高",
-            discoverer="nightly_code_review",
+            discoverer="code_review",
             description=f"类别: {issue.get('category', '-')}\n"
                         f"建议: {issue.get('suggestion', '')[:200]}",
         )
@@ -301,7 +301,7 @@ def _write_audit(operation: str, target: str, conclusion: str = "完成"):
 # ══════════════════════════════════════════════════════════════
 
 @register_task(
-    name="nightly_code_review",
+    name="code_review",
     trigger="cron",
     hour=10,
     minute=0,
@@ -310,13 +310,13 @@ def _write_audit(operation: str, target: str, conclusion: str = "完成"):
     timeout=1800,
     max_retries=1,
 )
-def nightly_code_review(context: TaskContext):
+def code_review(context: TaskContext):
     """代码走查（v2）"""
     config = _get_config(context)
     start_time = time.time()
 
     # 熔断器检查（Layer 3）
-    cb_result = _check_circuit("nightly_code_review", config)
+    cb_result = _check_circuit("code_review", config)
     if cb_result:
         return cb_result
 
@@ -450,7 +450,7 @@ def nightly_code_review(context: TaskContext):
             "report_path": report_path, "duration_s": duration,
         },
     )
-    _record_task_result("nightly_code_review", True, config)
+    _record_task_result("code_review", True, config)
     return result
 
 
@@ -459,7 +459,7 @@ def nightly_code_review(context: TaskContext):
 # ══════════════════════════════════════════════════════════════
 
 @register_task(
-    name="nightly_code_completion",
+    name="code_completion",
     trigger="cron",
     hour=11,
     minute=0,
@@ -468,13 +468,13 @@ def nightly_code_review(context: TaskContext):
     timeout=1800,
     max_retries=1,
 )
-def nightly_code_completion(context: TaskContext):
+def code_completion(context: TaskContext):
     """代码补全（v2 — TODO 感知）"""
     config = _get_config(context)
     start_time = time.time()
 
     # 熔断器检查（Layer 3）
-    cb_result = _check_circuit("nightly_code_completion", config)
+    cb_result = _check_circuit("code_completion", config)
     if cb_result:
         return cb_result
 
@@ -482,11 +482,11 @@ def nightly_code_completion(context: TaskContext):
         from executor.ollama_client import OllamaClient
         client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
         if not client.is_available():
-            _record_task_result("nightly_code_completion", False, config, "Ollama unavailable")
+            _record_task_result("code_completion", False, config, "Ollama unavailable")
             return TaskResult.fail(message="Ollama 服务不可用",
                                    error_code="SCH-NIGHT-001", skip_retry=True)
     except Exception as e:
-        _record_task_result("nightly_code_completion", False, config, str(e)[:100])
+        _record_task_result("code_completion", False, config, str(e)[:100])
         return TaskResult.fail(message=f"Ollama 连接失败: {e}", error_code="SCH-NIGHT-002")
 
     scanner = TargetScanner(
@@ -558,7 +558,7 @@ def nightly_code_completion(context: TaskContext):
         data={"files_processed": len(files), "markers_found": total_markers,
               "report_path": report_path, "duration_s": duration},
     )
-    _record_task_result("nightly_code_completion", True, config)
+    _record_task_result("code_completion", True, config)
     return result
 
 
@@ -567,7 +567,7 @@ def nightly_code_completion(context: TaskContext):
 # ══════════════════════════════════════════════════════════════
 
 @register_task(
-    name="nightly_test_generation",
+    name="test_generation",
     trigger="cron",
     hour=14,
     minute=0,
@@ -576,13 +576,13 @@ def nightly_code_completion(context: TaskContext):
     timeout=1800,
     max_retries=1,
 )
-def nightly_test_generation(context: TaskContext):
+def test_generation(context: TaskContext):
     """测试生成（v2 — 生成即执行）"""
     config = _get_config(context)
     start_time = time.time()
 
     # 熔断器检查（Layer 3）
-    cb_result = _check_circuit("nightly_test_generation", config)
+    cb_result = _check_circuit("test_generation", config)
     if cb_result:
         return cb_result
 
@@ -590,11 +590,11 @@ def nightly_test_generation(context: TaskContext):
         from executor.ollama_client import OllamaClient
         client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
         if not client.is_available():
-            _record_task_result("nightly_test_generation", False, config, "Ollama unavailable")
+            _record_task_result("test_generation", False, config, "Ollama unavailable")
             return TaskResult.fail(message="Ollama 服务不可用",
                                    error_code="SCH-NIGHT-001", skip_retry=True)
     except Exception as e:
-        _record_task_result("nightly_test_generation", False, config, str(e)[:100])
+        _record_task_result("test_generation", False, config, str(e)[:100])
         return TaskResult.fail(message=f"Ollama 连接失败: {e}", error_code="SCH-NIGHT-002")
 
     runner_mod, defect_mod, coverage_mod = _try_import_test_tools()
@@ -727,7 +727,7 @@ def nightly_test_generation(context: TaskContext):
             "report_path": report_path, "duration_s": duration,
         },
     )
-    _record_task_result("nightly_test_generation", True, config)
+    _record_task_result("test_generation", True, config)
     return result
 
 
@@ -834,7 +834,7 @@ def _save_test_file(source_path: str, test_code: str) -> Optional[str]:
 # ══════════════════════════════════════════════════════════════
 
 @register_task(
-    name="nightly_quality_report",
+    name="quality_report",
     trigger="cron",
     hour=4,
     minute=45,
@@ -843,7 +843,7 @@ def _save_test_file(source_path: str, test_code: str) -> Optional[str]:
     timeout=300,
     max_retries=0,
 )
-def nightly_quality_report(context: TaskContext):
+def quality_report(context: TaskContext):
     """汇总当日质量指标，生成趋势报告"""
     config = _get_config(context)
     try:

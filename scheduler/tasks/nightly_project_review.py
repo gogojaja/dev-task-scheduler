@@ -681,7 +681,7 @@ def _write_lightweight_report(project_name, findings, output_dir, date_str):
 # ── 任务注册：14B 轻量评审（每日 18:00）──
 
 @register_task(
-    name="nightly_project_review_14b",
+    name="project_review_14b",
     trigger="cron",
     hour=18,
     minute=0,
@@ -690,7 +690,7 @@ def _write_lightweight_report(project_name, findings, output_dir, date_str):
     timeout=3600,
     max_retries=1,
 )
-def nightly_project_review_14b(context: TaskContext):
+def project_review_14b(context: TaskContext):
     """14B 轻量评审：强制 lightweight 模式"""
     if hasattr(context, 'params') and isinstance(context.params, dict):
         context.params["review_mode"] = "lightweight"
@@ -700,7 +700,7 @@ def nightly_project_review_14b(context: TaskContext):
 # ── 任务注册：cascade 级联评审（每日 02:00，折扣时段）──
 
 @register_task(
-    name="nightly_project_review_cascade",
+    name="project_review_cascade",
     trigger="cron",
     hour=2,
     minute=0,
@@ -709,7 +709,7 @@ def nightly_project_review_14b(context: TaskContext):
     timeout=3600,
     max_retries=1,
 )
-def nightly_project_review_cascade(context: TaskContext):
+def project_review_cascade(context: TaskContext):
     """cascade 级联评审：使用定价管理器选择折扣时段最优模型"""
     if hasattr(context, 'params') and isinstance(context.params, dict):
         context.params["review_mode"] = "cascade"
@@ -729,7 +729,7 @@ def nightly_project_review_cascade(context: TaskContext):
 # ── 任务注册：免费模型评审（每日 22:00）──
 
 @register_task(
-    name="nightly_project_review_free",
+    name="project_review_free",
     trigger="cron",
     hour=22,
     minute=0,
@@ -738,7 +738,7 @@ def nightly_project_review_cascade(context: TaskContext):
     timeout=3600,
     max_retries=1,
 )
-def nightly_project_review_free(context: TaskContext):
+def project_review_free(context: TaskContext):
     """免费模型评审：使用免费 API 模型"""
     if hasattr(context, 'params') and isinstance(context.params, dict):
         context.params["review_mode"] = "cascade"
