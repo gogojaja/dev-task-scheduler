@@ -272,12 +272,18 @@ class Notifier:
 
             elif is_windows():
                 # Windows: PowerShell Toast Notification
+                # 转义特殊字符防止命令注入
+                def _ps_escape(s: str) -> str:
+                    return s.replace('`', '``').replace('"', '`"').replace('$', '`$')
+
+                safe_title = _ps_escape(title)
+                safe_message = _ps_escape(message)
                 ps_script = f"""
                 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
                 $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
                 $toastXml = [xml]$template.GetXml()
-                $toastXml.GetElementsByTagName("text").Item(0).AppendChild($toastXml.CreateTextNode("{title}")) > $null
-                $toastXml.GetElementsByTagName("text").Item(1).AppendChild($toastXml.CreateTextNode("{message}")) > $null
+                $toastXml.GetElementsByTagName("text").Item(0).AppendChild($toastXml.CreateTextNode("{safe_title}")) > $null
+                $toastXml.GetElementsByTagName("text").Item(1).AppendChild($toastXml.CreateTextNode("{safe_message}")) > $null
                 $toast = [Windows.UI.Notifications.ToastNotification]::new($toastXml)
                 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Scheduler").Show($toast)
                 """

@@ -16,17 +16,17 @@ from typing import Any, Dict, List
     trigger="cron", day_of_week="wed", hour=4, minute=0,
     description="nightly_dep_scan",
 )
-def run_dep_scan(config: Dict[str, Any]) -> Dict[str, Any]:
+def run_dep_scan(context) -> Dict[str, Any]:
     """执行依赖漏洞扫描
     
     Args:
-        config: 任务配置
+        context: TaskContext 执行上下文
     
     Returns:
         扫描结果摘要
     """
-    target_dirs = config.get("target_dirs", [])
-    output_dir = os.path.expanduser(config.get("output_dir", "~/projects/TwinForge/docs/nightly_reports/"))
+    target_dirs = context.params.get("target_dirs", [])
+    output_dir = os.path.expanduser(context.params.get("output_dir", "~/projects/TwinForge/docs/nightly_reports/"))
     
     results = []
     for project_dir in target_dirs:

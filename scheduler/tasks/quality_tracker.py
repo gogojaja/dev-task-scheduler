@@ -251,18 +251,5 @@ class QualityTracker:
         return f"{passed * 100 / total:.1f}%"
 
 
-@register_task(
-    name="nightly_quality_report",
-    trigger="cron",
-    hour=5,
-    minute=0,
-    description="nightly_quality_report",
-)
-def run_quality_report(config: dict) -> str:
-    """生成质量趋势报告"""
-    output_dir = os.path.expanduser(
-        config.get('output_dir', '~/projects/TwinForge/docs/nightly_reports/')
-    )
-    tracker = QualityTracker(output_dir=output_dir)
-    report_path = tracker.write_trend_report()
-    return f'Quality report generated: {report_path}'
+# 注：nightly_quality_report 已在 nightly_code_tasks.py 中通过 @register_task 注册
+# 此处不再重复注册，避免调度时间冲突

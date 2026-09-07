@@ -66,6 +66,7 @@ class TaskRegistry:
         idempotency_key: str = "{date}",
         max_retries: int = None,
         timeout: int = None,
+        params: dict = None,
         **trigger_kwargs,
     ) -> Callable:
         """注册函数为任务（装饰器内部实现）
@@ -107,6 +108,7 @@ class TaskRegistry:
             timeout=timeout if timeout is not None else config.execution.default_timeout,
             idempotency_key_expr=idempotency_key,
             status="active",
+            params=params or {},
         )
 
         self.register(task_def, func)
@@ -293,6 +295,7 @@ def register_task(
     idempotency_key: str = "{date}",
     max_retries: int = None,
     timeout: int = None,
+    params: dict = None,
     # cron 参数
     year=None, month=None, day=None, week=None,
     day_of_week=None, hour=None, minute=None, second=None,
@@ -354,6 +357,7 @@ def register_task(
             idempotency_key=idempotency_key,
             max_retries=max_retries,
             timeout=timeout,
+            params=params,
             **trigger_kwargs,
         )
         return func

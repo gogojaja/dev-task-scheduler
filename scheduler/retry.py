@@ -232,6 +232,11 @@ class RetryPolicy:
         return [e.to_dict() for e in self.history]
 
 
+_retry_policy_instance = None
+
 def get_retry_policy() -> RetryPolicy:
-    """获取全局重试策略"""
-    return RetryPolicy.from_config()
+    """获取全局重试策略（单例）"""
+    global _retry_policy_instance
+    if _retry_policy_instance is None:
+        _retry_policy_instance = RetryPolicy.from_config()
+    return _retry_policy_instance

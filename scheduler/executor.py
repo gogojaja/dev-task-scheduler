@@ -56,6 +56,7 @@ class TaskExecutor:
         trigger_type: str = "schedule",
         scheduled_time: datetime = None,
         params: dict = None,
+        _context: "TaskContext | None" = None,
     ) -> TaskResult:
         """执行任务
 
@@ -78,11 +79,15 @@ class TaskExecutor:
         Returns:
             执行结果
         """
-        context = TaskContext.create(
+        context = _context or TaskContext.create(
             task_name=task_def.name,
             scheduled_time=scheduled_time or now(),
             params={**task_def.params, **(params or {})},
         )
+        # 重试时保留 retry_count 但生成新 run_id，避免 UNIQUE 约束冲突
+        if _context is not None:
+            import uuid
+            context.run_id = str(uuid.uuid4())
 
         logger.info(f"Executing task: {task_def.name} (run_id={context.run_id}, trigger={trigger_type})")
 
@@ -197,6 +202,7 @@ class TaskExecutor:
                 trigger_type="retry" if attempt > 0 else trigger_type,
                 scheduled_time=scheduled_time,
                 params=params,
+                _context=context,
             )
 
             if result.success:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -50,6 +51,7 @@ class RecordWriter:
         config = get_config()
         self.csv_path = Path(csv_path) if csv_path else resolve_path(config.recording.csv_path)
         self.enabled = config.recording.enabled
+        self._file_lock = threading.Lock()
         self._ensure_file()
 
     def _ensure_file(self):
@@ -102,9 +104,10 @@ class RecordWriter:
             exec_no = gen_execution_id()
             row = self._record_to_row(record, exec_no)
 
-            with open(self.csv_path, "a", encoding="utf-8-sig", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(row)
+            with self._file_lock:
+                with open(self.csv_path, "a", encoding="utf-8-sig", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(row)
 
             logger.debug(f"Execution record appended: {record.run_id} -> {exec_no}")
             return exec_no

@@ -683,9 +683,9 @@ def _write_lightweight_report(project_name, findings, output_dir, date_str):
 @register_task(
     name="project_review_14b",
     trigger="cron",
-    hour=18,
+    hour=5,
     minute=0,
-    description="14B 轻量评审（本地模型，每日 18:00）",
+    description="14B 轻量评审（本地模型，每日 05:00）",
     idempotency_key="{date}-14b",
     timeout=3600,
     max_retries=1,

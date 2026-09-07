@@ -165,10 +165,10 @@ class SchedulerContext:
         if not self._initialized:
             raise RuntimeError("Context not initialized. Call initialize() first.")
 
-        from .scheduler import Scheduler
-        return Scheduler(
-            store=self._store,
+        from .scheduler import SchedulerManager
+        return SchedulerManager(
             registry=self._registry,
+            store=self._store,
         )
 
     def get_info(self) -> dict:

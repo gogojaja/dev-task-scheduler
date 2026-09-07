@@ -133,7 +133,7 @@ def _get_config(context: TaskContext) -> Dict[str, Any]:
         "output_dir": context.params.get("output_dir", "~/nightly_reports/"),
         "model": context.params.get("model", "qwen2.5-coder:14b"),
         "ollama_host": context.params.get("ollama_host", "127.0.0.1"),
-        "ollama_port": context.params.get("ollama_port", 11500),
+        "ollama_port": context.params.get("ollama_port", 11434),
         "incremental": context.params.get("incremental", True),
         "execution_log": context.params.get(
             "execution_log",
@@ -303,8 +303,8 @@ def _write_audit(operation: str, target: str, conclusion: str = "完成"):
 @register_task(
     name="code_review",
     trigger="cron",
-    hour=10,
-    minute=0,
+    hour=2,
+    minute=30,
     description="代码走查：增量扫描 + 安全扫描 + 缺陷/RAID 登记",
     idempotency_key="{date}-review",
     timeout=1800,
@@ -461,7 +461,7 @@ def code_review(context: TaskContext):
 @register_task(
     name="code_completion",
     trigger="cron",
-    hour=11,
+    hour=3,
     minute=0,
     description="代码补全：TODO/FIXME 感知模式",
     idempotency_key="{date}-completion",
@@ -569,8 +569,8 @@ def code_completion(context: TaskContext):
 @register_task(
     name="test_generation",
     trigger="cron",
-    hour=14,
-    minute=0,
+    hour=3,
+    minute=30,
     description="测试生成 + 执行验证 + 覆盖率采集",
     idempotency_key="{date}-testgen",
     timeout=1800,
@@ -836,8 +836,8 @@ def _save_test_file(source_path: str, test_code: str) -> Optional[str]:
 @register_task(
     name="quality_report",
     trigger="cron",
-    hour=4,
-    minute=45,
+    hour=6,
+    minute=0,
     description="质量趋势汇总报告",
     idempotency_key="{date}-quality",
     timeout=300,
