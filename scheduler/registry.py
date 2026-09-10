@@ -287,7 +287,7 @@ class TaskRegistry:
 task_registry = TaskRegistry()
 
 
-def register_task(
+def register_task(  # nodebt DEEP-CMP-004: 参数面刻意对齐 APScheduler cron/interval/date 三类触发器契约，为公开装饰器 API，收拢为参数对象将破坏全部调用点
     name: str,
     trigger: str = "cron",
     *,

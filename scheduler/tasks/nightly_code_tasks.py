@@ -149,6 +149,27 @@ def _get_executor(config: Dict[str, Any]):
     return CodeTaskExecutor(client=client, model=config["model"])
 
 
+def _connect_ollama(config: Dict[str, Any], task_name: Optional[str] = None) -> Optional[TaskResult]:
+    """连接并检查 Ollama 可用性。
+
+    可用返回 None；不可用或连接异常返回对应的 fail TaskResult。
+    task_name 非空时，失败路径同步记录熔断器（保留各任务原有行为差异）。
+    """
+    try:
+        from executor.ollama_client import OllamaClient
+        client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
+        if not client.is_available():
+            if task_name:
+                _record_task_result(task_name, False, config, "Ollama unavailable")
+            return TaskResult.fail(message="Ollama 服务不可用",
+                                   error_code="SCH-NIGHT-001", skip_retry=True)
+    except Exception as e:
+        if task_name:
+            _record_task_result(task_name, False, config, str(e)[:100])
+        return TaskResult.fail(message=f"Ollama 连接失败: {e}", error_code="SCH-NIGHT-002")
+    return None
+
+
 def _get_last_run_time(execution_log: str) -> Optional[datetime]:
     """从 execution_log.csv 读取上次成功执行时间"""
     log_path = os.path.expanduser(execution_log)
@@ -321,14 +342,9 @@ def code_review(context: TaskContext):
         return cb_result
 
     # Ollama 连接检查
-    try:
-        from executor.ollama_client import OllamaClient
-        client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
-        if not client.is_available():
-            return TaskResult.fail(message="Ollama 服务不可用",
-                                   error_code="SCH-NIGHT-001", skip_retry=True)
-    except Exception as e:
-        return TaskResult.fail(message=f"Ollama 连接失败: {e}", error_code="SCH-NIGHT-002")
+    ollama_fail = _connect_ollama(config)
+    if ollama_fail:
+        return ollama_fail
 
     # 文件扫描（增量或全量）
     scanner = TargetScanner(
@@ -478,16 +494,9 @@ def code_completion(context: TaskContext):
     if cb_result:
         return cb_result
 
-    try:
-        from executor.ollama_client import OllamaClient
-        client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
-        if not client.is_available():
-            _record_task_result("code_completion", False, config, "Ollama unavailable")
-            return TaskResult.fail(message="Ollama 服务不可用",
-                                   error_code="SCH-NIGHT-001", skip_retry=True)
-    except Exception as e:
-        _record_task_result("code_completion", False, config, str(e)[:100])
-        return TaskResult.fail(message=f"Ollama 连接失败: {e}", error_code="SCH-NIGHT-002")
+    ollama_fail = _connect_ollama(config, "code_completion")
+    if ollama_fail:
+        return ollama_fail
 
     scanner = TargetScanner(
         target_dirs=config["target_dirs"],
@@ -586,16 +595,9 @@ def test_generation(context: TaskContext):
     if cb_result:
         return cb_result
 
-    try:
-        from executor.ollama_client import OllamaClient
-        client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
-        if not client.is_available():
-            _record_task_result("test_generation", False, config, "Ollama unavailable")
-            return TaskResult.fail(message="Ollama 服务不可用",
-                                   error_code="SCH-NIGHT-001", skip_retry=True)
-    except Exception as e:
-        _record_task_result("test_generation", False, config, str(e)[:100])
-        return TaskResult.fail(message=f"Ollama 连接失败: {e}", error_code="SCH-NIGHT-002")
+    ollama_fail = _connect_ollama(config, "test_generation")
+    if ollama_fail:
+        return ollama_fail
 
     runner_mod, defect_mod, coverage_mod = _try_import_test_tools()
 
@@ -621,86 +623,14 @@ def test_generation(context: TaskContext):
     tests_saved = 0
 
     for fi in files:
-        try:
-            with open(fi.path, "r", encoding="utf-8") as f:
-                source = f.read()
-
-            # 检查同目录是否已有测试文件
-            existing_tests = _find_existing_tests(fi.path)
-            existing_summary = "\n".join(existing_tests) if existing_tests else ""
-
-            test_gen = executor.generate_tests(source, fi.path,
-                                                existing_tests=existing_summary)
-            if not test_gen.test_code or test_gen.error:
-                results.append({
-                    "file_path": fi.path, "test_code": "",
-                    "test_result": "生成失败",
-                    "error": test_gen.error,
-                })
-                continue
-
-            # 写入临时文件并执行验证
-            test_result = _execute_generated_test(
-                fi.path, test_gen.test_code, runner_mod,
-            )
-
-            result = {
-                "file_path": fi.path,
-                "test_code": test_gen.test_code[:1000],  # 截断
-                "test_targets": test_gen.test_targets,
-                "test_count": test_gen.test_count,
-                "test_result": test_result["status"],
-                "test_passed": test_result.get("passed", 0),
-                "test_failed": test_result.get("failed", 0),
-                "tokens": test_gen.tokens,
-                "duration_s": test_gen.duration_s,
-                "error": test_gen.error,
-            }
-
-            if test_result["status"] == "PASS":
-                tests_passed += 1
-                # 测试通过 → 保存到项目测试目录
-                saved = _save_test_file(fi.path, test_gen.test_code)
-                if saved:
-                    tests_saved += 1
-                    result["saved_to"] = saved
-            else:
-                tests_failed += 1
-
-            results.append(result)
-
-        except Exception as e:
-            results.append({"file_path": fi.path, "test_code": "", "error": str(e)})
+        outcome = _generate_test_for_file(fi, executor, runner_mod)
+        results.append(outcome["result"])
+        tests_passed += outcome["passed"]
+        tests_failed += outcome["failed"]
+        tests_saved += outcome["saved"]
 
     # 覆盖率采集（对有测试的项目）
-    coverage_data = {}
-    if coverage_mod:
-        try:
-            # 从 target_dirs 推导项目路径
-            project_dirs = set()
-            for td in config["target_dirs"]:
-                expanded = os.path.expanduser(td)
-                # 向上找到项目根目录（含 pyproject.toml 或 setup.py）
-                _p = expanded
-                for _ in range(5):
-                    if os.path.isfile(os.path.join(_p, "pyproject.toml")) or \
-                       os.path.isfile(os.path.join(_p, "setup.py")):
-                        project_dirs.add(_p)
-                        break
-                    _parent = os.path.dirname(_p)
-                    if _parent == _p:
-                        break
-                    _p = _parent
-
-            for pd in project_dirs:
-                cov = coverage_mod.collect_coverage(pd, timeout=120)
-                coverage_data[cov.project_name] = {
-                    "rate": cov.coverage_rate,
-                    "total": cov.total_lines,
-                    "covered": cov.covered_lines,
-                }
-        except Exception as e:
-            logger.warning("覆盖率采集失败: %s", e)
+    coverage_data = _collect_coverage(config, coverage_mod)
 
     duration = time.time() - start_time
     writer = NightlyReportWriter(output_dir=config["output_dir"])
@@ -729,6 +659,106 @@ def test_generation(context: TaskContext):
     )
     _record_task_result("test_generation", True, config)
     return result
+
+
+def _generate_test_for_file(fi: Any, executor: Any, runner_mod: Optional[Any]) -> Dict[str, Any]:
+    """为单个源文件生成测试并执行验证。
+
+    返回聚合结果：{"result": <写入报告的结果 dict>,
+                   "passed": int, "failed": int, "saved": int}
+    passed/failed/saved 为 0/1 计数增量，供调用方累加；
+    生成失败或异常路径不产生计数增量（与重构前行为一致）。
+    """
+    try:
+        with open(fi.path, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        # 检查同目录是否已有测试文件
+        existing_tests = _find_existing_tests(fi.path)
+        existing_summary = "\n".join(existing_tests) if existing_tests else ""
+
+        test_gen = executor.generate_tests(source, fi.path,
+                                            existing_tests=existing_summary)
+        if not test_gen.test_code or test_gen.error:
+            return {
+                "result": {
+                    "file_path": fi.path, "test_code": "",
+                    "test_result": "生成失败",
+                    "error": test_gen.error,
+                },
+                "passed": 0, "failed": 0, "saved": 0,
+            }
+
+        # 写入临时文件并执行验证
+        test_result = _execute_generated_test(
+            fi.path, test_gen.test_code, runner_mod,
+        )
+
+        result = {
+            "file_path": fi.path,
+            "test_code": test_gen.test_code[:1000],  # 截断
+            "test_targets": test_gen.test_targets,
+            "test_count": test_gen.test_count,
+            "test_result": test_result["status"],
+            "test_passed": test_result.get("passed", 0),
+            "test_failed": test_result.get("failed", 0),
+            "tokens": test_gen.tokens,
+            "duration_s": test_gen.duration_s,
+            "error": test_gen.error,
+        }
+
+        passed = failed = saved = 0
+        if test_result["status"] == "PASS":
+            passed = 1
+            # 测试通过 → 保存到项目测试目录
+            saved_path = _save_test_file(fi.path, test_gen.test_code)
+            if saved_path:
+                saved = 1
+                result["saved_to"] = saved_path
+        else:
+            failed = 1
+
+        return {"result": result, "passed": passed, "failed": failed, "saved": saved}
+
+    except Exception as e:
+        return {
+            "result": {"file_path": fi.path, "test_code": "", "error": str(e)},
+            "passed": 0, "failed": 0, "saved": 0,
+        }
+
+
+def _collect_coverage(config: Dict[str, Any], coverage_mod: Optional[Any]) -> Dict[str, Any]:
+    """对有测试的项目采集覆盖率；coverage_mod 不可用时返回空 dict。"""
+    coverage_data: Dict[str, Any] = {}
+    if not coverage_mod:
+        return coverage_data
+    try:
+        # 从 target_dirs 推导项目路径
+        project_dirs = set()
+        for td in config["target_dirs"]:
+            expanded = os.path.expanduser(td)
+            # 向上找到项目根目录（含 pyproject.toml 或 setup.py）
+            _p = expanded
+            for _ in range(5):
+                if os.path.isfile(os.path.join(_p, "pyproject.toml")) or \
+                   os.path.isfile(os.path.join(_p, "setup.py")):
+                    project_dirs.add(_p)
+                    break
+                _parent = os.path.dirname(_p)
+                if _parent == _p:
+                    break
+                _p = _parent
+
+        for pd in project_dirs:
+            cov = coverage_mod.collect_coverage(pd, timeout=120)
+            coverage_data[cov.project_name] = {
+                "rate": cov.coverage_rate,
+                "total": cov.total_lines,
+                "covered": cov.covered_lines,
+            }
+    except Exception as e:
+        logger.warning("覆盖率采集失败: %s", e)
+    return coverage_data
 
 
 def _find_existing_tests(source_path: str) -> List[str]:
