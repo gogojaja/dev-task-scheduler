@@ -38,3 +38,15 @@ tasks:
     - tools/scheduler/tasks/
   config_files:
     - config/tasks.yaml
+
+# ── 模型路由配置（dev-model-router）──
+# 云端 API 通过环境变量注入（不在配置文件中存储密钥）：
+#   CLOUD_API_BASE_URL  - 云端 API 地址（DashScope/DeepSeek/OpenAI）
+#   CLOUD_API_KEY       - 云端 API 密钥（从 ~/ai-env.sh 加载）
+#   CLOUD_API_MODEL     - 云端模型名称
+router:
+  enabled: true
+  mode: keyword          # keyword | classifier | hybrid
+  prefer_local: true     # 同等复杂度优先本地模型
+  daily_budget: 5.0      # 每日云端预算上限（美元）
+  cost_storage: .secrets/router_costs.json  # 成本记录存储路径

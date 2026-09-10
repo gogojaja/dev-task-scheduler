@@ -85,6 +85,10 @@ class NightlyReportWriter:
         elif task_name == "code_completion":
             lines.extend(self._render_code_completion(results, meta))
 
+        # 路由/成本摘要
+        if meta.get("routing_enabled"):
+            lines.extend(self._render_routing_summary(meta))
+
         # 错误汇总
         errors = [r for r in results if r.get("error")]
         if errors:
@@ -209,4 +213,24 @@ class NightlyReportWriter:
                                  f"{r.get('marker_type', '?')}, 置信度: {conf_icon})")
                     lines.append(f"> {r.get('marker_comment', '')}")
                     lines.append("")
+        return lines
+
+    def _render_routing_summary(self, meta: Dict) -> List[str]:
+        """渲染路由/成本摘要段（仅当路由启用时显示）"""
+        routed_local = meta.get("routed_local", 0)
+        routed_cloud = meta.get("routed_cloud", 0)
+        degraded = meta.get("degraded_to_local", 0)
+        total_cost = meta.get("total_cost", 0.0)
+        cloud_ratio = meta.get("cloud_ratio", 0.0)
+
+        lines = [
+            "", "## 模型路由摘要",
+            "",
+            f"- 本地执行: {routed_local} 任务（$0.00）",
+            f"- 云端执行: {routed_cloud} 任务（${total_cost:.4f}）",
+            f"- 云端占比: {cloud_ratio:.0%}",
+        ]
+        if degraded > 0:
+            lines.append(f"- 降级回退: {degraded} 任务（云端失败→本地）")
+        lines.append("")
         return lines

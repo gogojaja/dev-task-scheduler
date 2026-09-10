@@ -149,6 +149,58 @@ def _get_executor(config: Dict[str, Any]):
     return CodeTaskExecutor(client=client, model=config["model"])
 
 
+def _get_routed_executor(config: Dict[str, Any]):
+    """创建路由执行器（自动按复杂度选择本地/云端模型）。
+
+    如果 dev-model-router 的路由模块不可用，回退到纯本地执行器。
+    """
+    from executor.ollama_client import OllamaClient
+
+    ollama = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
+
+    # 尝试加载路由层（优雅降级）
+    try:
+        from executor.routed_executor import RoutedExecutor
+        from executor.cloud_client import CloudClient
+        from pathlib import Path
+
+        cloud = CloudClient()  # 从环境变量读取 CLOUD_API_*
+        cost_path = config.get("cost_storage", "~/nightly_reports/router_costs.json")
+
+        return RoutedExecutor(
+            ollama_client=ollama,
+            cloud_client=cloud if cloud.is_configured else None,
+            local_model=config["model"],
+            cost_storage_path=Path(os.path.expanduser(cost_path)),
+            daily_budget=float(os.environ.get("DAILY_BUDGET_LIMIT", "5.0")),
+            router_mode=os.environ.get("ROUTER_MODE", "keyword"),
+            prefer_local=os.environ.get("ROUTER_PREFER_LOCAL", "true").lower() in ("true", "1", "yes"),
+        )
+    except ImportError:
+        logger.warning("dev-model-router 路由模块不可用，回退到纯本地执行器")
+        from executor.code_executor import CodeTaskExecutor
+        return CodeTaskExecutor(client=ollama, model=config["model"])
+
+
+def _extract_routing_metadata(executor: Any) -> Dict[str, Any]:
+    """从路由执行器提取统计信息（供报告使用）。"""
+    try:
+        from executor.routed_executor import RoutedExecutor
+        if isinstance(executor, RoutedExecutor):
+            stats = executor.get_routing_stats()
+            return {
+                "routed_local": stats.routed_local,
+                "routed_cloud": stats.routed_cloud,
+                "degraded_to_local": stats.degraded_to_local,
+                "total_cost": stats.total_cost,
+                "cloud_ratio": stats.cloud_ratio,
+                "routing_enabled": True,
+            }
+    except (ImportError, AttributeError):
+        pass
+    return {"routing_enabled": False}
+
+
 def _connect_ollama(config: Dict[str, Any], task_name: Optional[str] = None) -> Optional[TaskResult]:
     """连接并检查 Ollama 可用性。
 
@@ -367,7 +419,7 @@ def code_review(context: TaskContext):
     if not files:
         return TaskResult.ok(message="无目标文件（增量模式无变更）", data={"files_count": 0})
 
-    executor = _get_executor(config)
+    executor = _get_routed_executor(config)
     results: List[Dict] = []
     total_issues = 0
     security_alerts = 0
@@ -427,6 +479,7 @@ def code_review(context: TaskContext):
 
     # 报告
     writer = NightlyReportWriter(output_dir=config["output_dir"])
+    routing_meta = _extract_routing_metadata(executor)
     report_path = writer.write(
         task_name="code_review",
         results=results,
@@ -436,6 +489,7 @@ def code_review(context: TaskContext):
             "security_alerts": security_alerts,
             "defects_registered": defects_registered,
             "incremental": config.get("incremental", True),
+            **routing_meta,
         },
     )
 
@@ -455,15 +509,20 @@ def code_review(context: TaskContext):
     except ImportError:
         pass
 
+    routing_info = ""
+    if routing_meta.get("routing_enabled"):
+        routing_info = (f", 路由: {routing_meta['routed_local']}本地/"
+                       f"{routing_meta['routed_cloud']}云端")
     result = TaskResult.ok(
         message=f"代码走查完成: {len(files)} 文件, {total_issues} 问题, "
                 f"{security_alerts} 安全告警, {defects_registered} 缺陷已登记, "
-                f"耗时 {duration:.0f}s",
+                f"耗时 {duration:.0f}s{routing_info}",
         data={
             "files_reviewed": len(files), "issues_found": total_issues,
             "security_alerts": security_alerts,
             "defects_registered": defects_registered,
             "report_path": report_path, "duration_s": duration,
+            **routing_meta,
         },
     )
     _record_task_result("code_review", True, config)
@@ -512,7 +571,7 @@ def code_completion(context: TaskContext):
     if not files:
         return TaskResult.ok(message="无目标文件", data={"files_count": 0})
 
-    executor = _get_executor(config)
+    executor = _get_routed_executor(config)
     results: List[Dict] = []
     total_markers = 0
 
@@ -551,12 +610,14 @@ def code_completion(context: TaskContext):
 
     duration = time.time() - start_time
     writer = NightlyReportWriter(output_dir=config["output_dir"])
+    routing_meta = _extract_routing_metadata(executor)
     report_path = writer.write(
         task_name="code_completion",
         results=results,
         metadata={
             "files_count": len(files), "duration_s": duration,
             "total_markers": total_markers,
+            **routing_meta,
         },
     )
     _write_audit("code_completion", f"{len(files)} files, {total_markers} markers")
@@ -616,7 +677,7 @@ def test_generation(context: TaskContext):
     if not files:
         return TaskResult.ok(message="无目标文件", data={"files_count": 0})
 
-    executor = _get_executor(config)
+    executor = _get_routed_executor(config)
     results: List[Dict] = []
     tests_passed = 0
     tests_failed = 0
@@ -634,6 +695,7 @@ def test_generation(context: TaskContext):
 
     duration = time.time() - start_time
     writer = NightlyReportWriter(output_dir=config["output_dir"])
+    routing_meta = _extract_routing_metadata(executor)
     report_path = writer.write(
         task_name="test_generation",
         results=results,
@@ -641,6 +703,7 @@ def test_generation(context: TaskContext):
             "files_count": len(files), "duration_s": duration,
             "tests_passed": tests_passed, "tests_failed": tests_failed,
             "tests_saved": tests_saved, "coverage": coverage_data,
+            **routing_meta,
         },
     )
     _write_audit("test_generation",
