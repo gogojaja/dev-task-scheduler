@@ -142,15 +142,8 @@ def _get_config(context: TaskContext) -> Dict[str, Any]:
     }
 
 
-def _get_executor(config: Dict[str, Any]):
-    from executor.ollama_client import OllamaClient
-    from executor.code_executor import CodeTaskExecutor
-    client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
-    return CodeTaskExecutor(client=client, model=config["model"])
-
-
 def _get_routed_executor(config: Dict[str, Any]):
-    """创建路由执行器（自动按复杂度选择本地/云端模型）。
+    """创建路由执行器（三层降级链：本地 → 免费云端 → 付费云端）。
 
     如果 dev-model-router 的路由模块不可用，回退到纯本地执行器。
     """
@@ -164,12 +157,20 @@ def _get_routed_executor(config: Dict[str, Any]):
         from executor.cloud_client import CloudClient
         from pathlib import Path
 
-        cloud = CloudClient()  # 从环境变量读取 CLOUD_API_*
+        # L1: 免费云端（智谱 GLM-Flash / SiliconFlow）
+        free = CloudClient(
+            base_url=os.environ.get("FREE_API_BASE_URL", ""),
+            api_key=os.environ.get("FREE_API_KEY", ""),
+            model=os.environ.get("FREE_API_MODEL", ""),
+        )
+        # L2: 付费云端（百炼 DashScope / DeepSeek）
+        cloud = CloudClient()  # 从 CLOUD_API_* 环境变量读取
         cost_path = config.get("cost_storage", "~/nightly_reports/router_costs.json")
 
         return RoutedExecutor(
             ollama_client=ollama,
             cloud_client=cloud if cloud.is_configured else None,
+            free_client=free if free.is_configured else None,
             local_model=config["model"],
             cost_storage_path=Path(os.path.expanduser(cost_path)),
             daily_budget=float(os.environ.get("DAILY_BUDGET_LIMIT", "5.0")),

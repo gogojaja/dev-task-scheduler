@@ -1,6 +1,6 @@
-"""技术债务分类任务（v1 — 14B LLM 分类 TODO/FIXME/HACK）
+"""技术债务分类任务（v2 — 接入 RoutedExecutor 路由层）
 
-扫描代码中的 TODO 标记，调用 14B 模型进行分类和优先级排序。
+扫描代码中的 TODO 标记，通过 RoutedExecutor 按复杂度路由到 14B 或云端模型进行分类。
 """
 from ..registry import register_task
 
@@ -27,9 +27,9 @@ def run_debt_classify(config: Dict[str, Any]) -> Dict[str, Any]:
     """
     target_dirs = config.get("target_dirs", [])
     output_dir = os.path.expanduser(config.get("output_dir", "~/projects/TwinForge/docs/nightly_reports/"))
-    model = config.get("model", "qwen2.5-coder:14b")
-    ollama_host = config.get("ollama_host", "127.0.0.1")
-    ollama_port = config.get("ollama_port", 11434)
+
+    # 创建路由执行器
+    executor = _get_routed_executor(config)
     
     # 扫描所有 TODO 标记
     all_todos = []
@@ -54,7 +54,7 @@ def run_debt_classify(config: Dict[str, Any]) -> Dict[str, Any]:
     batch_size = 50
     for i in range(0, len(all_todos), batch_size):
         batch = all_todos[i:i+batch_size]
-        result = _classify_with_llm(batch, model, ollama_host, ollama_port)
+        result = _classify_with_llm(batch, executor)
         classified.extend(result)
     
     report = {
@@ -99,36 +99,49 @@ def _scan_todo_markers(project_dir: str) -> List[Dict]:
     return markers
 
 
-def _classify_with_llm(todos: List[Dict], model: str, host: str, port: int) -> List[Dict]:
-    """调用 14B 模型分类"""
+def _get_routed_executor(config: Dict[str, Any]):
+    """创建路由执行器（复用 nightly_code_tasks 的工厂逻辑）。"""
+    try:
+        from .nightly_code_tasks import _get_routed_executor as _factory
+        return _factory(config)
+    except ImportError:
+        from executor.ollama_client import OllamaClient
+        client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
+        return client, config.get("model", "qwen2.5-coder:14b")
+
+
+def _classify_with_llm(todos: List[Dict], executor) -> List[Dict]:
+    """通过路由执行器分类"""
     try:
         from executor.prompts.debt_classify import SYSTEM_PROMPT, USER_TEMPLATE
-        
+
         todos_text = "\n".join(
             f"{t['file']}:{t['line']} [{t['marker']}] {t['comment']}"
             for t in todos
         )
         prompt = USER_TEMPLATE.format(todo_items=todos_text)
-        
-        import urllib.request
-        payload = json.dumps({
-            "model": model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": False,
-        }).encode("utf-8")
-        
-        req = urllib.request.Request(
-            f"http://{host}:{port}/api/chat",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        resp = urllib.request.urlopen(req, timeout=180)
-        result = json.loads(resp.read().decode("utf-8"))
-        
-        content = result.get("message", {}).get("content", "[]")
+
+        # 判断 executor 类型
+        try:
+            from executor.routed_executor import RoutedExecutor
+            if isinstance(executor, RoutedExecutor):
+                resp = executor.run_prompt(
+                    system_prompt=SYSTEM_PROMPT,
+                    user_prompt=prompt,
+                    task_type="debt_classify",
+                    context_hint=f"debt classify: {todos_text[:300]}",
+                )
+                content = resp["text"]
+            else:
+                raise TypeError("not RoutedExecutor")
+        except (ImportError, TypeError):
+            client, model = executor
+            ollama_resp = client.generate(
+                model=model, prompt=prompt,
+                system=SYSTEM_PROMPT, task_type="debt_classify",
+            )
+            content = ollama_resp.text
+
         try:
             return json.loads(content)
         except json.JSONDecodeError:

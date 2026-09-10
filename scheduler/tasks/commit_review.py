@@ -1,6 +1,6 @@
-"""Commit Message 质量审查任务（v1 — 14B LLM 审查）
+"""Commit Message 质量审查任务（v2 — 接入 RoutedExecutor 路由层）
 
-提取近 24h 的 commit messages，调用 14B 模型审查 Conventional Commits 合规性。
+提取近 24h 的 commit messages，通过 RoutedExecutor 按复杂度路由到 14B 或云端模型审查。
 """
 from ..registry import register_task
 
@@ -27,9 +27,9 @@ def run_commit_review(config: Dict[str, Any]) -> Dict[str, Any]:
     """
     target_dirs = config.get("target_dirs", [])
     output_dir = os.path.expanduser(config.get("output_dir", "~/projects/TwinForge/docs/nightly_reports/"))
-    model = config.get("model", "qwen2.5-coder:14b")
-    ollama_host = config.get("ollama_host", "127.0.0.1")
-    ollama_port = config.get("ollama_port", 11434)
+
+    # 创建路由执行器
+    executor = _get_routed_executor(config)
     
     results = []
     for project_dir in target_dirs:
@@ -42,8 +42,8 @@ def run_commit_review(config: Dict[str, Any]) -> Dict[str, Any]:
         if not commits:
             continue
         
-        # 调用 14B 审查
-        review_result = _review_with_llm(commits, model, ollama_host, ollama_port)
+        # 通过路由执行器审查（自动选择本地/云端）
+        review_result = _review_with_llm(commits, executor)
         results.append({
             "project": project_name,
             "commit_count": len(commits),
@@ -72,34 +72,48 @@ def _get_recent_commits(project_dir: str) -> List[str]:
         return []
 
 
-def _review_with_llm(commits: List[str], model: str, host: str, port: int) -> List[Dict]:
-    """调用 14B 模型审查 commit messages"""
+def _get_routed_executor(config: Dict[str, Any]):
+    """创建路由执行器（复用 nightly_code_tasks 的工厂逻辑）。"""
+    try:
+        from .nightly_code_tasks import _get_routed_executor as _factory
+        return _factory(config)
+    except ImportError:
+        # 回退：直接创建 OllamaClient 包装
+        from executor.ollama_client import OllamaClient
+        client = OllamaClient(host=config["ollama_host"], port=config["ollama_port"])
+        return client, config.get("model", "qwen2.5-coder:14b")
+
+
+def _review_with_llm(commits, executor) -> List[Dict]:
+    """通过路由执行器审查 commit messages"""
     try:
         from executor.prompts.commit_review import SYSTEM_PROMPT, USER_TEMPLATE
-        
+
         commits_text = "\n".join(commits)
         prompt = USER_TEMPLATE.format(commit_messages=commits_text)
-        
-        import urllib.request
-        payload = json.dumps({
-            "model": model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": False,
-        }).encode("utf-8")
-        
-        req = urllib.request.Request(
-            f"http://{host}:{port}/api/chat",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        resp = urllib.request.urlopen(req, timeout=120)
-        result = json.loads(resp.read().decode("utf-8"))
-        
-        content = result.get("message", {}).get("content", "[]")
-        # 尝试解析 JSON
+
+        # 判断 executor 类型：RoutedExecutor 或 OllamaClient 回退
+        try:
+            from executor.routed_executor import RoutedExecutor
+            if isinstance(executor, RoutedExecutor):
+                resp = executor.run_prompt(
+                    system_prompt=SYSTEM_PROMPT,
+                    user_prompt=prompt,
+                    task_type="commit_review",
+                    context_hint=f"commit review: {commits_text[:300]}",
+                )
+                content = resp["text"]
+            else:
+                raise TypeError("not RoutedExecutor")
+        except (ImportError, TypeError):
+            # 回退：直接调用 OllamaClient
+            client, model = executor
+            ollama_resp = client.generate(
+                model=model, prompt=prompt,
+                system=SYSTEM_PROMPT, task_type="commit_review",
+            )
+            content = ollama_resp.text
+
         try:
             return json.loads(content)
         except json.JSONDecodeError:

@@ -380,13 +380,16 @@ def _nightly_project_review_impl(context: TaskContext):
     except Exception as e:
         return TaskResult.fail(message=f"Ollama 连接失败: {e}", error_code="SCH-REVIEW-002")
 
+    # ── 创建路由执行器（供 lightweight 模式使用）──
+    routed_executor = _create_routed_executor(config, client)
+
     # ── 模式路由 ──
     mode = config["review_mode"]
     logger.info("评审模式: %s", mode)
 
     if mode == "lightweight":
         result = _run_lightweight_review(
-            client, config, PROJECT_REGISTRY, output_dir, todo_dir, date_str,
+            routed_executor, config, PROJECT_REGISTRY, output_dir, todo_dir, date_str,
         )
     elif mode == "cascade":
         result = _run_cascade_review(
@@ -408,10 +411,37 @@ def _nightly_project_review_impl(context: TaskContext):
     )
 
 
+def _create_routed_executor(config, ollama_client):
+    """创建路由执行器（三层降级链：本地 → 免费云端 → 付费云端）。"""
+    try:
+        from executor.routed_executor import RoutedExecutor
+        from executor.cloud_client import CloudClient
+        # L1: 免费云端
+        free = CloudClient(
+            base_url=os.environ.get("FREE_API_BASE_URL", ""),
+            api_key=os.environ.get("FREE_API_KEY", ""),
+            model=os.environ.get("FREE_API_MODEL", ""),
+        )
+        # L2: 付费云端
+        cloud = CloudClient(
+            base_url=config.get("cloud_api_base_url", ""),
+            api_key=config.get("cloud_api_key", ""),
+            model=config.get("cloud_api_model", ""),
+        )
+        return RoutedExecutor(
+            ollama_client=ollama_client,
+            cloud_client=cloud if cloud.is_configured else None,
+            free_client=free if free.is_configured else None,
+            local_model=config["model"],
+        )
+    except ImportError:
+        return None
+
+
 # ── Mode A: 轻量评审（14B 逐文档结构/一致性/完整性检查）──
 
-def _run_lightweight_review(client, config, projects, output_dir, todo_dir, date_str):
-    """轻量评审：14B 做结构校验 + 引用一致性 + 完整性清单"""
+def _run_lightweight_review(executor, config, projects, output_dir, todo_dir, date_str):
+    """轻量评审：通过路由执行器做结构校验 + 引用一致性 + 完整性清单"""
     from executor.prompts.lightweight_review import (
         SYSTEM_PROMPT, USER_TEMPLATE, get_checklist,
     )
@@ -446,11 +476,33 @@ def _run_lightweight_review(client, config, projects, output_dir, todo_dir, date
                 document_content=doc_content,
             )
             try:
-                resp = client.generate(
-                    model=config["model"], prompt=prompt,
-                    system=SYSTEM_PROMPT, task_type="document_review",
-                )
-                parsed = _parse_review_json(resp.text)
+                # 优先使用路由执行器
+                if executor is not None:
+                    try:
+                        from executor.routed_executor import RoutedExecutor
+                        if isinstance(executor, RoutedExecutor):
+                            resp = executor.run_prompt(
+                                system_prompt=SYSTEM_PROMPT,
+                                user_prompt=prompt,
+                                task_type="lightweight_review",
+                                context_hint=f"review {doc_spec['path']}: {doc_content[:300]}",
+                            )
+                            text = resp["text"]
+                        else:
+                            raise TypeError("not RoutedExecutor")
+                    except (ImportError, TypeError):
+                        # executor 为 None 或非 RoutedExecutor，回退到 OllamaClient
+                        resp_obj = executor if not isinstance(executor, type(None)) else None
+                        if resp_obj is None:
+                            raise RuntimeError("no executor available")
+                        ollama_resp = resp_obj.generate(
+                            model=config["model"], prompt=prompt,
+                            system=SYSTEM_PROMPT, task_type="document_review",
+                        )
+                        text = ollama_resp.text
+                else:
+                    raise RuntimeError("no executor available")
+                parsed = _parse_review_json(text)
                 findings = parsed.get("findings", [])
                 for f in findings:
                     f["source"] = "local"
