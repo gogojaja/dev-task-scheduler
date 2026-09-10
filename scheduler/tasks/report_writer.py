@@ -218,8 +218,10 @@ class NightlyReportWriter:
     def _render_routing_summary(self, meta: Dict) -> List[str]:
         """渲染路由/成本摘要段（仅当路由启用时显示）"""
         routed_local = meta.get("routed_local", 0)
+        routed_free = meta.get("routed_free", 0)
         routed_cloud = meta.get("routed_cloud", 0)
         degraded = meta.get("degraded_to_local", 0)
+        degraded_to_paid = meta.get("degraded_to_paid", 0)
         total_cost = meta.get("total_cost", 0.0)
         cloud_ratio = meta.get("cloud_ratio", 0.0)
 
@@ -227,10 +229,14 @@ class NightlyReportWriter:
             "", "## 模型路由摘要",
             "",
             f"- 本地执行: {routed_local} 任务（$0.00）",
-            f"- 云端执行: {routed_cloud} 任务（${total_cost:.4f}）",
-            f"- 云端占比: {cloud_ratio:.0%}",
         ]
+        if routed_free > 0:
+            lines.append(f"- 免费云端: {routed_free} 任务（$0.00）")
+        lines.append(f"- 付费云端: {routed_cloud} 任务（${total_cost:.4f}）")
+        lines.append(f"- 云端占比: {cloud_ratio:.0%}")
         if degraded > 0:
             lines.append(f"- 降级回退: {degraded} 任务（云端失败→本地）")
+        if degraded_to_paid > 0:
+            lines.append(f"- 免费→付费升级: {degraded_to_paid} 任务")
         lines.append("")
         return lines

@@ -191,9 +191,12 @@ def _extract_routing_metadata(executor: Any) -> Dict[str, Any]:
             stats = executor.get_routing_stats()
             return {
                 "routed_local": stats.routed_local,
+                "routed_free": stats.routed_free,
                 "routed_cloud": stats.routed_cloud,
                 "degraded_to_local": stats.degraded_to_local,
+                "degraded_to_paid": stats.degraded_to_paid,
                 "total_cost": stats.total_cost,
+                "total_cost_free": stats.total_cost_free,
                 "cloud_ratio": stats.cloud_ratio,
                 "routing_enabled": True,
             }
@@ -512,8 +515,12 @@ def code_review(context: TaskContext):
 
     routing_info = ""
     if routing_meta.get("routing_enabled"):
-        routing_info = (f", 路由: {routing_meta['routed_local']}本地/"
-                       f"{routing_meta['routed_cloud']}云端")
+        parts = [f"{routing_meta['routed_local']}本地"]
+        if routing_meta.get('routed_free', 0):
+            parts.append(f"{routing_meta['routed_free']}免费云端")
+        if routing_meta.get('routed_cloud', 0):
+            parts.append(f"{routing_meta['routed_cloud']}付费云端")
+        routing_info = ", 路由: " + "/".join(parts)
     result = TaskResult.ok(
         message=f"代码走查完成: {len(files)} 文件, {total_issues} 问题, "
                 f"{security_alerts} 安全告警, {defects_registered} 缺陷已登记, "
